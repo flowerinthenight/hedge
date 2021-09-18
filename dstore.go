@@ -3,16 +3,30 @@ package dstore
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
+type KeyValue struct {
+	Key       string
+	Value     []byte
+	Timestamp time.Time // ignored in Put()
+}
+
 // Storer defines the interface for storage backend for Store.
 type Storer interface {
-	Put(key string, value []byte) error
-	Get(key string) ([]byte, error)
+	// Put saves a key/value to Storer.
+	Put(kv KeyValue) error
+
+	// Get a key (or keys) from Storer.
+	// 0 (default) = latest only
+	// -1 = all (latest to oldest, [0]=latest)
+	// -2 = oldest version only
+	// >0 = items behind latest; 3 means latest + 2 versions behind, [0]=latest
+	Get(key string, limit ...int64) ([]KeyValue, error)
 }
 
 // Store is our main distributed, append-only log storage object.
@@ -41,13 +55,15 @@ func (s *Store) Start(ctx context.Context, done ...chan error) error {
 	return nil
 }
 
+// Config is our configuration to New().
 type Config struct {
-	Id      string // will generate uuid if empty
-	NatsCon *nats.Conn
-	Lock    *spindle.Lock
-	Log     Storer
+	Id      string        // will generate uuid if empty
+	NatsCon *nats.Conn    // NATS connection for communication
+	Lock    *spindle.Lock // distributed locker
+	Log     Storer        // append-only log
 }
 
+// New creates an instance of Store.
 func New(cfg Config) *Store {
 	s := &Store{cfg.Id, cfg.NatsCon, cfg.Lock, cfg.Log}
 	if s.id == "" {
