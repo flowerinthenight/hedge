@@ -10,6 +10,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// KeyValue represents an item in our log.
 type KeyValue struct {
 	Key       string
 	Value     []byte
