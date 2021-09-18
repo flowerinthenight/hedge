@@ -22,7 +22,7 @@ type Storer interface {
 	// Put saves a key/value to Storer.
 	Put(kv KeyValue) error
 
-	// Get a key (or keys) from Storer.
+	// Get reads a key (or keys) from Storer.
 	// 0 (default) = latest only
 	// -1 = all (latest to oldest, [0]=latest)
 	// -2 = oldest version only
