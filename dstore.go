@@ -85,6 +85,12 @@ func (s *Store) String() string {
 	)
 }
 
+// PubSubProject returns the project used in PubSub operations.
+func (s *Store) PubSubProject() string { return s.pubsubProject }
+
+// SpannerClient returns the spanner client object used in Spanner operations.
+func (s *Store) SpannerClient() *spanner.Client { return s.spannerClient }
+
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
 // optionally sending a error message to 'done' when finished.
 func (s *Store) Run(ctx context.Context, done ...chan error) error {
@@ -256,8 +262,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 
 	id := uuid.NewString()
 	leader, _ := s.HasLock()
-	// NOTE: test only, rm !
-	if !leader { // we're in luck, quite straightforward
+	if leader { // we're in luck, quite straightforward
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
