@@ -27,7 +27,7 @@ spec:
       # 'dstoredemo' service account here is mapped to a GCP's IAM service account
       # that has access to Spanner and PubSub.
       # If you're not using Workload Identity, you can also use a service account key
-      # and set GOOGLE_APPLICATION_CREDENTIALS environment variable. Uncomment below.
+      # and set the GOOGLE_APPLICATION_CREDENTIALS environment variable.
       serviceAccountName: dstoredemo
       initContainers:
       - image: gcr.io/google.com/cloudsdktool/cloud-sdk:358.0.0-alpine
@@ -39,7 +39,7 @@ spec:
           curl -s -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' --retry 30 --retry-connrefused --retry-max-time 30 > /dev/null || exit 1
       containers:
       - name: dstoredemo
-        image: asia.gcr.io/mobingi-main/dstoredemo
+        image: quay.io/flowerinthenight/dstoredemo:v0.0.2
         imagePullPolicy: Always
         # TODO: Update as needed.
         args: ["-db=projects/{project}/instances/{instance}/databases/{database}"]
@@ -51,5 +51,19 @@ spec:
               fieldPath: status.podIP
         - name: GET_HOSTS_FROM
           value: dns
+        # - name: GOOGLE_APPLICATION_CREDENTIALS
+        #   value: /etc/svcacct.json
         ports:
         - containerPort: 8080
+      # Uncomment the section below and the env variable above to use GOOGLE_APPLICATION_CREDENTIALS
+      # for authentication. You can upload a service account JSON file thru:
+      # kubectl create secret generic dstoredemo-keyfile --from-file svcacct.json
+      #
+      #   volumeMounts:
+      #   - name: keyfile
+      #     mountPath: "/etc/dstoredemo"
+      #     readOnly: true
+      # volumes:
+      # - name: keyfile
+      #   secret:
+      #     secretName: dstoredemo-keyfile
