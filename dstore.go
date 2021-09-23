@@ -161,7 +161,13 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		return err
 	}
 
-	defer sub.Delete(ctx)
+	defer func() {
+		err := sub.Delete(ctx) // best-effort cleanup
+		if err != nil {
+			s.logger.Printf("sub.Delete failed: %v", err)
+		}
+	}()
+
 	subdone := make(chan error, 1)
 	go func() {
 		lssub := lspubsub.NewLengthySubscriber(nil, s.pubsubProject, s.subName(), s.onRecv)
