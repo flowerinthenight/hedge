@@ -13,20 +13,34 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/spanner"
-	cloudevents "github.com/cloudevents/sdk-go/v2"
 	lspubsub "github.com/flowerinthenight/longsub/gcppubsub"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
 const (
 	spindleLockName = "dstorespindlelock"
+
+	CmdWrite = "WRITE"
+	CmdAck   = "ACK"
 )
 
 var (
 	ErrNotRunning = fmt.Errorf("dstore: not running")
 )
+
+type cmd_t struct {
+	Ctrl string // WRITE|ACK
+	Data []byte // LogItem if WRITE, id if ACK
+}
+
+type KeyValue struct {
+	Key       string
+	Value     string
+	Timestamp time.Time // ignored in Put()
+}
 
 // LogItem represents an item in our log.
 type LogItem struct {
@@ -49,14 +63,26 @@ type Store struct {
 
 	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
 
-	*spindle.Lock                     // handles our distributed lock
-	lockTable     string              // spindle lock table
-	lockName      string              // spindle lock name
-	logTable      string              // append-only log table
-	queue         map[string]struct{} // for tracking outgoing/incoming NATS messages
-	writeTimeout  int64               // Put() timeout
-	active        int32               // 1=running, 0=off
-	sync.Mutex
+	*spindle.Lock                        // handles our distributed lock
+	lockTable     string                 // spindle lock table
+	lockName      string                 // spindle lock name
+	logTable      string                 // append-only log table
+	queue         map[string]chan []byte // for tracking outgoing/incoming messages
+	writeTimeout  int64                  // Put() timeout
+	active        int32                  // 1=running, 0=off
+	mtx           sync.Mutex             // local lock
+}
+
+// String returns some friendly information.
+func (s *Store) String() string {
+	return fmt.Sprintf("name:%v/%s spindle:%v;%v;%v pubsub:%v",
+		s.group,
+		s.id,
+		s.spannerClient.DatabaseName(),
+		s.lockTable,
+		s.logTable,
+		s.pubsubProject,
+	)
 }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
@@ -153,44 +179,185 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	return nil
 }
 
-// Put saves a key/value to Store.
-func (s *Store) Put(ctx context.Context, kv LogItem) error {
-	if atomic.LoadInt32(&s.active) != 1 {
-		return ErrNotRunning
-	}
-
-	return nil
-}
-
 // Get reads a key (or keys) from Store.
 // 0 (default) = latest only
 // -1 = all (latest to oldest, [0]=latest)
 // -2 = oldest version only
 // >0 = items behind latest; 3 means latest + 2 versions behind, [0]=latest
-func (s *Store) Get(ctx context.Context, key string, limit ...int64) ([]LogItem, error) {
-	return nil, nil
+func (s *Store) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
+	defer func(begin time.Time) {
+		s.logger.Printf("[Get] duration=%v", time.Since(begin))
+	}(time.Now())
+
+	ret := []KeyValue{}
+	query := `select key, value, timestamp
+from ` + s.logTable + `
+where key = @key and timestamp is not null
+order by timestamp desc limit 1`
+
+	if len(limit) > 0 {
+		switch {
+		case limit[0] > 0:
+			query = `"select key, value, timestamp
+from ` + s.logTable + `
+where key = @key and timestamp is not null
+order by timestamp desc limit ` + fmt.Sprintf("%v", limit[0])
+		case limit[0] == -1:
+			query = `"select key, value, timestamp
+from ` + s.logTable + `
+where key = @key and timestamp is not null
+order by timestamp desc`
+		case limit[0] == -2:
+			query = `"select key, value, timestamp
+from ` + s.logTable + `
+where key = @key and timestamp is not null
+order by timestamp limit 1`
+		}
+	}
+
+	stmt := spanner.Statement{SQL: query, Params: map[string]interface{}{"key": key}}
+	iter := s.spannerClient.Single().Query(ctx, stmt)
+	defer iter.Stop()
+	for {
+		row, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+
+		if err != nil {
+			return ret, err
+		}
+
+		var li LogItem
+		err = row.ToStruct(&li)
+		if err != nil {
+			return ret, err
+		}
+
+		ret = append(ret, KeyValue{
+			Key:       li.Key,
+			Value:     li.Value,
+			Timestamp: li.Timestamp,
+		})
+	}
+
+	return ret, nil
 }
 
-func (s *Store) onRecv(ctx interface{}, data []byte) error {
-	s.logger.Println(string(data))
-	var e cloudevents.Event
-	err := json.Unmarshal(data, &e)
+// Put saves a key/value to Store.
+func (s *Store) Put(ctx context.Context, kv KeyValue) error {
+	if atomic.LoadInt32(&s.active) != 1 {
+		return ErrNotRunning
+	}
+
+	defer func(begin time.Time) {
+		s.logger.Printf("[Put] duration=%v", time.Since(begin))
+	}(time.Now())
+
+	id := uuid.NewString()
+	leader, _ := s.HasLock()
+	// NOTE: test only, rm !
+	if !leader { // we're in luck, quite straightforward
+		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
+			spanner.InsertOrUpdate(s.logTable,
+				[]string{"id", "key", "value", "leader", "timestamp"},
+				[]interface{}{id, kv.Key, kv.Value, s.id, spanner.CommitTimestamp},
+			),
+		})
+
+		return err
+	}
+
+	// For non-leaders, do a 2-stage write.
+	// 1) Broadcast the write to all group members. All non-leaders receiving the message
+	// will just ignore it, including us.
+	// 2) The leader who receives the write message will write kv without the timestamp.
+	// Leader will then broadcast the 'ack' message to all members. Non-senders will just
+	// ignore the ack, but we will complete the write by updating the timestamp. Then the
+	// write is complete.
+
+	ch := make(chan []byte, 1)
+	func() {
+		s.mtx.Lock()
+		defer s.mtx.Unlock()
+		s.queue[id] = ch
+	}()
+
+	li := LogItem{
+		Id:    id,
+		Key:   kv.Key,
+		Value: kv.Value,
+	}
+
+	// Broadcast write to leader.
+	b, _ := json.Marshal(li)
+	c := cmd_t{Ctrl: CmdWrite, Data: b}
+	b, _ = json.Marshal(c)
+	res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
+	_, err := res.Get(ctx)
 	if err != nil {
 		return err
+	}
+
+	// Read reply, if any.
+	var timeout = time.Second * time.Duration(s.writeTimeout)
+	subctx := context.WithValue(ctx, struct{}{}, nil)
+
+	select {
+	case <-subctx.Done():
+		break
+	case <-time.After(timeout):
+		break
+	case b := <-ch:
+		_ = b
 	}
 
 	return nil
 }
 
-// newMsg returns a JSON standard cloudevent message.
-// See https://github.com/cloudevents/sdk-go for more details.
-func (s *Store) newMsg(data interface{}) cloudevents.Event {
-	m := cloudevents.NewEvent()
-	m.SetID(uuid.New().String())
-	m.SetSource(fmt.Sprintf("dstore/%s", s.id))
-	m.SetType("dstore.event.internal")
-	m.SetData(cloudevents.ApplicationJSON, data)
-	return m
+func (s *Store) onRecv(app interface{}, data []byte) error {
+	ctx := context.Background()
+	s.logger.Println(string(data))
+	var cmd cmd_t
+	err := json.Unmarshal(data, &cmd)
+	if err != nil {
+		s.logger.Printf("Unmarshal failed: %v", err)
+		return err
+	}
+
+	leader, _ := s.HasLock()
+	if leader {
+		switch {
+		case cmd.Ctrl == CmdWrite:
+			var li LogItem
+			json.Unmarshal(cmd.Data, &li)
+			_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
+				spanner.InsertOrUpdate(s.logTable,
+					[]string{"id", "key", "value", "leader"},
+					[]interface{}{li.Id, li.Key, li.Value, s.id},
+				),
+			})
+
+			if err != nil {
+				s.logger.Printf("InsertOrUpdate failed: %v", err)
+				return err
+			}
+
+			// Broadcast our ACK reply.
+			rep := cmd_t{Ctrl: CmdAck, Data: []byte(li.Id)}
+			b, _ := json.Marshal(rep)
+			res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
+			_, err = res.Get(ctx)
+			if err != nil {
+				s.logger.Printf("Publish (ACK/%v) failed: %v", li.Id, err)
+				return err
+			}
+		case cmd.Ctrl == CmdAck:
+			s.logger.Printf("do nothing")
+		}
+	}
+
+	return nil
 }
 
 func (s *Store) getTopic(ctx context.Context, client *pubsub.Client) (*pubsub.Topic, error) {
@@ -232,8 +399,7 @@ type Config struct {
 	// Required: the group name this instance belongs to.
 	// NOTE: Will also be used as PubSub topic name, so naming conventions apply.
 	// See https://cloud.google.com/pubsub/docs/admin#resource_names
-	GroupName string
-
+	GroupName        string
 	Id               string                // optional: this instance's unique id, will generate uuid if empty
 	SpannerClient    *spanner.Client       // required: Spanner client, project is implicit, will not use 'PubSubProject'
 	SpindleTable     string                // required: table name for *spindle.Lock
@@ -256,7 +422,7 @@ func New(cfg Config) *Store {
 		logTable:         cfg.LogTable,
 		pubsubProject:    cfg.PubSubProject,
 		pubsubClientOpts: cfg.PubSubClientOpts,
-		queue:            make(map[string]struct{}),
+		queue:            make(map[string]chan []byte),
 		writeTimeout:     cfg.WriteTimeout,
 		logger:           cfg.Logger,
 	}

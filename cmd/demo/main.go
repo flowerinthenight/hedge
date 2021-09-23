@@ -4,37 +4,52 @@ import (
 	"context"
 	"flag"
 	"log"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/dstore"
 )
 
 var (
-	dbstr = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
+	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
+	group        = flag.String("group", "dstore-demo-group", "group name, common to all instances")
+	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
+	logTable     = flag.String("logtable", "testdstore_log", "the table for our log data")
 )
 
 func main() {
 	flag.Parse()
-	db, err := spanner.NewClient(context.Background(), *dbstr)
+	client, err := spanner.NewClient(context.Background(), *dbstr)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
 	s := dstore.New(dstore.Config{
-		GroupName:     "dstore-demo-group",
+		GroupName:     *group,
 		Id:            "dstore-demo-1",
-		SpannerClient: db,
-		SpindleTable:  "testlease",
-		LogTable:      "testdstore_log",
+		SpannerClient: client,
+		SpindleTable:  *spindleTable,
+		LogTable:      *logTable,
 	})
 
-	done := make(chan error, 1)
+	log.Println(s)
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Run(ctx, done)
+	done := make(chan error, 1)
 
-	time.Sleep(time.Minute * 2)
-	cancel()
+	go func() {
+		s.Run(ctx, done)
+	}()
+
+	// Interrupt handler.
+	go func() {
+		sigch := make(chan os.Signal)
+		signal.Notify(sigch, syscall.SIGINT, syscall.SIGTERM)
+		log.Printf("signal: %v", <-sigch)
+		cancel()
+	}()
+
 	<-done
 }
