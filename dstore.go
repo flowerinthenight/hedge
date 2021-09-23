@@ -162,7 +162,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}
 
 	defer func() {
-		err := sub.Delete(ctx) // best-effort cleanup
+		err := sub.Delete(context.Background()) // best-effort cleanup
 		if err != nil {
 			s.logger.Printf("sub.Delete failed: %v", err)
 		}
