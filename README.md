@@ -50,7 +50,7 @@ cancel()
 <-done
 ```
 
-A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner and PubSub permissions.
+A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner and PubSub permissions.
 
 Once deployed, you can test by sending PubSub messages to the created topic while checking the logs.
 ```sh
