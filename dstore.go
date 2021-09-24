@@ -50,7 +50,7 @@ type LogItem struct {
 
 // Store is our main distributed, append-only log storage object.
 type Store struct {
-	id            string // this instance's unique id
+	hostPort      string // host:port
 	spannerClient *spanner.Client
 	*spindle.Lock                        // handles our distributed lock
 	lockTable     string                 // spindle lock table
@@ -67,7 +67,7 @@ type Store struct {
 // String returns some friendly information.
 func (s *Store) String() string {
 	return fmt.Sprintf("name:%s spindle:%v;%v;%v",
-		s.id,
+		s.hostPort,
 		s.spannerClient.DatabaseName(),
 		s.lockTable,
 		s.logTable,
@@ -105,8 +105,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}
 
 	// Setup our server for leader communication.
-	host := s.id + ":8080"
-	addr, err := net.ResolveTCPAddr("tcp4", host)
+	addr, err := net.ResolveTCPAddr("tcp4", s.hostPort)
 	if err != nil {
 		s.logger.Printf("ResolveTCPAddr failed: %v", err)
 		return err
@@ -118,7 +117,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		return err
 	}
 
-	s.logger.Printf("tcp: listen on %v", host)
+	s.logger.Printf("tcp: listen on %v", s.hostPort)
 	handleConn := func(conn net.Conn) {
 		defer conn.Close()
 		for {
@@ -193,7 +192,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		s.lockTable,
 		fmt.Sprintf("dstore/spindle/lockname/%v", s.lockName),
 		spindle.WithDuration(30000), // 30s duration
-		spindle.WithId(s.id),
+		spindle.WithId(s.hostPort),
 	)
 
 	spindledone := make(chan error, 1)
@@ -299,7 +298,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
-				[]interface{}{uuid.NewString(), kv.Key, kv.Value, s.id, spanner.CommitTimestamp},
+				[]interface{}{uuid.NewString(), kv.Key, kv.Value, s.hostPort, spanner.CommitTimestamp},
 			),
 		})
 
@@ -416,8 +415,8 @@ func (s *Store) buildAckReply(err error) string {
 
 // Config is our configuration to New().
 type Config struct {
-	Id              string          // optional: this instance's unique id, will generate uuid if empty
-	SpannerClient   *spanner.Client // required: Spanner client, project is implicit, will not use 'PubSubProject'
+	HostPort        string          // required: serves as the instance's unique id, should be ip:port
+	SpannerClient   *spanner.Client // required: Spanner client connection
 	SpindleTable    string          // required: table name for *spindle.Lock
 	SpindleLockName string          // optional: "dstorespindlelock" by default
 	LogTable        string          // required: table name for the append-only storage
@@ -428,7 +427,7 @@ type Config struct {
 // New creates an instance of Store.
 func New(cfg Config) *Store {
 	s := &Store{
-		id:            cfg.Id,
+		hostPort:      cfg.HostPort,
 		spannerClient: cfg.SpannerClient,
 		lockTable:     cfg.SpindleTable,
 		lockName:      cfg.SpindleLockName,
@@ -436,10 +435,6 @@ func New(cfg Config) *Store {
 		queue:         make(map[string]chan []byte),
 		writeTimeout:  cfg.WriteTimeout,
 		logger:        cfg.Logger,
-	}
-
-	if s.id == "" {
-		s.id = uuid.NewString()
 	}
 
 	if s.lockName == "" {
@@ -451,7 +446,7 @@ func New(cfg Config) *Store {
 	}
 
 	if s.logger == nil {
-		prefix := fmt.Sprintf("[dstore/%v] ", s.id)
+		prefix := fmt.Sprintf("[dstore/%v] ", s.hostPort)
 		s.logger = log.New(os.Stdout, prefix, log.LstdFlags)
 	}
 

@@ -67,7 +67,7 @@ func main() {
 	}
 
 	s := dstore.New(dstore.Config{
-		Id:              *id,
+		HostPort:        *id + ":8080",
 		SpannerClient:   client,
 		SpindleTable:    *spindleTable,
 		SpindleLockName: *lockName,
