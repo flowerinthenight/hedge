@@ -49,3 +49,5 @@ go s.Run(ctx, done)
 cancel()
 <-done
 ```
+
+A sample [deployment](./deployment_template.yaml) file is provided, although it needs a fair bit of editing to be usable.
