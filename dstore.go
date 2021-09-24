@@ -174,7 +174,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		s.lockTable,
 		fmt.Sprintf("dstore/spindle/lockname/%v", s.group),
 		spindle.WithDuration(30000), // 30s duration
-		spindle.WithId(fmt.Sprintf("dstore/spindle/%v", s.id)),
+		spindle.WithId(s.id),
 	)
 
 	spindledone := make(chan error, 1)
