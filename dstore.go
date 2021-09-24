@@ -3,6 +3,7 @@ package dstore
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -13,13 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/spanner"
-	lspubsub "github.com/flowerinthenight/longsub/gcppubsub"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
 const (
@@ -40,9 +38,9 @@ type cmd_t struct {
 }
 
 type KeyValue struct {
-	Key       string
-	Value     string
-	Timestamp time.Time // ignored in Put()
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	Timestamp time.Time `json:"timestamp"` // ignored in Put()
 }
 
 // LogItem represents an item in our log.
@@ -60,10 +58,6 @@ type Store struct {
 	id            string // this instance's unique id
 	spannerClient *spanner.Client
 
-	pubsubProject    string
-	pubsubClientOpts []option.ClientOption
-	pub              *pubsub.Topic // internal publisher
-
 	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
 
 	*spindle.Lock                        // handles our distributed lock
@@ -78,21 +72,14 @@ type Store struct {
 
 // String returns some friendly information.
 func (s *Store) String() string {
-	return fmt.Sprintf("name:%v/%s spindle:%v;%v;%v pubsub:%v",
+	return fmt.Sprintf("name:%v/%s spindle:%v;%v;%v",
 		s.group,
 		s.id,
 		s.spannerClient.DatabaseName(),
 		s.lockTable,
 		s.logTable,
-		s.pubsubProject,
 	)
 }
-
-// PubSubProject returns the project used in PubSub operations.
-func (s *Store) PubSubProject() string { return s.pubsubProject }
-
-// SpannerClient returns the spanner client object used in Spanner operations.
-func (s *Store) SpannerClient() *spanner.Client { return s.spannerClient }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
 // optionally sending a error message to 'done' when finished.
@@ -163,6 +150,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 				if ldr, _ := s.HasLock(); ldr {
 					reply := fmt.Sprintf("%v\n", CmdAck)
 					conn.Write([]byte(reply))
+					return
 				} else {
 					conn.Write([]byte("\n"))
 					return
@@ -209,48 +197,6 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		<-spindledone // and wait
 	}()
 
-	// Setup our broadcast topic.
-	client, err := pubsub.NewClient(ctx, s.pubsubProject, s.pubsubClientOpts...)
-	if err != nil {
-		return err
-	}
-
-	defer client.Close()
-
-	// Most likely, multiple instances will be calling this roughly at the same time.
-	for i := 0; i < 30; i++ { // 1min?
-		pub, err := s.getTopic(ctx, client)
-		if err != nil {
-			s.logger.Printf("dstore: attemtp #%v: getTopic failed, retry: %v", i, err)
-			time.Sleep(time.Second * 2)
-			continue
-		}
-
-		s.pub = pub
-		break
-	}
-
-	if s.pub == nil {
-		err = fmt.Errorf("dstore: publisher setup failed")
-		return err
-	}
-
-	sub, err := s.getSubscription(ctx, client, s.pub)
-	if err != nil {
-		return err
-	}
-
-	defer sub.Delete(context.Background()) // best-effort cleanup
-	subdone := make(chan error, 1)
-	go func() {
-		lssub := lspubsub.NewLengthySubscriber(nil, s.pubsubProject, s.subName(), s.onRecv)
-		err := lssub.Start(context.WithValue(ctx, struct{}{}, nil), subdone)
-		if err != nil {
-			s.logger.Printf("lssub.Start failed: %v", err)
-		}
-	}()
-
-	defer func() { <-subdone }()
 	atomic.StoreInt32(&s.active, 1)
 	defer atomic.StoreInt32(&s.active, 0)
 
@@ -324,7 +270,7 @@ order by timestamp limit 1`
 }
 
 // Put saves a key/value to Store.
-func (s *Store) Put(ctx context.Context, kv KeyValue) error {
+func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	if atomic.LoadInt32(&s.active) != 1 {
 		return ErrNotRunning
 	}
@@ -334,8 +280,13 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 	}(time.Now())
 
 	id := uuid.NewString()
+	var tmpdirect bool
+	if len(direct) > 0 {
+		tmpdirect = direct[0]
+	}
+
 	leader, _ := s.HasLock()
-	if leader { // we're in luck, quite straightforward
+	if tmpdirect || leader {
 		s.logger.Printf("leader: direct write: %+v", kv)
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
@@ -390,7 +341,9 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 
 	switch {
 	case strings.HasPrefix(msg, CmdAck):
-		msg = fmt.Sprintf("%v this_is_a_write_msg\n", CmdWrite)
+		b, _ := json.Marshal(kv)
+		encoded := base64.StdEncoding.EncodeToString(b)
+		msg = fmt.Sprintf("%v %v\n", CmdWrite, encoded)
 		_, err = conn.Write([]byte(msg)) // actual write request, expect ACK
 		if err != nil {
 			s.logger.Printf("Write failed: %v", err)
@@ -414,155 +367,36 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		}
 	}
 
-	// ch := make(chan []byte, 1)
-	// func() {
-	// 	s.mtx.Lock()
-	// 	defer s.mtx.Unlock()
-	// 	s.queue[id] = ch
-	// }()
-
-	// li := LogItem{
-	// 	Id:    id,
-	// 	Key:   kv.Key,
-	// 	Value: kv.Value,
-	// }
-
-	// // Broadcast write to leader.
-	// b, _ := json.Marshal(li)
-	// c := cmd_t{Ctrl: CmdWrite, Data: b}
-	// b, _ = json.Marshal(c)
-	// res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
-	// _, err = res.Get(ctx)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// // Read reply, if any.
-	// var timeout = time.Second * time.Duration(s.writeTimeout)
-	// subctx := context.WithValue(ctx, struct{}{}, nil)
-
-	// select {
-	// case <-subctx.Done():
-	// 	break
-	// case <-time.After(timeout):
-	// 	break
-	// case b := <-ch:
-	// 	_ = b
-	// }
-
 	return nil
 }
-
-func (s *Store) onRecv(app interface{}, data []byte) error {
-	ctx := context.Background()
-	s.logger.Println(string(data))
-	var cmd cmd_t
-	err := json.Unmarshal(data, &cmd)
-	if err != nil {
-		s.logger.Printf("Unmarshal failed: %v", err)
-		return err
-	}
-
-	leader, _ := s.HasLock()
-	if leader {
-		switch {
-		case cmd.Ctrl == CmdWrite:
-			var li LogItem
-			json.Unmarshal(cmd.Data, &li)
-			_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
-				spanner.InsertOrUpdate(s.logTable,
-					[]string{"id", "key", "value", "leader"},
-					[]interface{}{li.Id, li.Key, li.Value, s.id},
-				),
-			})
-
-			if err != nil {
-				s.logger.Printf("InsertOrUpdate failed: %v", err)
-				return err
-			}
-
-			// Broadcast our ACK reply.
-			rep := cmd_t{Ctrl: CmdAck, Data: []byte(li.Id)}
-			b, _ := json.Marshal(rep)
-			res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
-			_, err = res.Get(ctx)
-			if err != nil {
-				s.logger.Printf("Publish (ACK/%v) failed: %v", li.Id, err)
-				return err
-			}
-		case cmd.Ctrl == CmdAck:
-			s.logger.Printf("do nothing")
-		}
-	}
-
-	return nil
-}
-
-func (s *Store) getTopic(ctx context.Context, client *pubsub.Client) (*pubsub.Topic, error) {
-	topic := client.Topic(s.pubName())
-	exists, err := topic.Exists(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if !exists {
-		return client.CreateTopic(ctx, s.pubName())
-	}
-
-	return topic, nil
-}
-
-func (s *Store) getSubscription(ctx context.Context, client *pubsub.Client, topic *pubsub.Topic) (*pubsub.Subscription, error) {
-	sub := client.Subscription(s.subName())
-	exists, err := sub.Exists(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if !exists {
-		return client.CreateSubscription(ctx, s.subName(), pubsub.SubscriptionConfig{
-			Topic:       topic,
-			AckDeadline: time.Second * 60,
-		})
-	}
-
-	return sub, nil
-}
-
-func (s *Store) pubName() string { return "dstore-pub-" + s.group }
-func (s *Store) subName() string { return "dstore-sub-" + s.id }
 
 // Config is our configuration to New().
 type Config struct {
 	// Required: the group name this instance belongs to.
 	// NOTE: Will also be used as PubSub topic name, so naming conventions apply.
 	// See https://cloud.google.com/pubsub/docs/admin#resource_names
-	GroupName        string
-	Id               string                // optional: this instance's unique id, will generate uuid if empty
-	SpannerClient    *spanner.Client       // required: Spanner client, project is implicit, will not use 'PubSubProject'
-	SpindleTable     string                // required: table name for *spindle.Lock
-	SpindleLockName  string                // optional: "dstorespindlelock" by default
-	LogTable         string                // required: table name for the append-only storage
-	PubSubProject    string                // optional: project for PubSub operations, get from 'SpannerClient' if empty
-	PubSubClientOpts []option.ClientOption // optional: additional opts when creating the PubSub client
-	WriteTimeout     int64                 // optional: wait time (in ms) for Put(), default is 5000ms
-	Logger           *log.Logger           // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
+	GroupName       string
+	Id              string          // optional: this instance's unique id, will generate uuid if empty
+	SpannerClient   *spanner.Client // required: Spanner client, project is implicit, will not use 'PubSubProject'
+	SpindleTable    string          // required: table name for *spindle.Lock
+	SpindleLockName string          // optional: "dstorespindlelock" by default
+	LogTable        string          // required: table name for the append-only storage
+	WriteTimeout    int64           // optional: wait time (in ms) for Put(), default is 5000ms
+	Logger          *log.Logger     // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
 // New creates an instance of Store.
 func New(cfg Config) *Store {
 	s := &Store{
-		group:            cfg.GroupName,
-		id:               cfg.Id,
-		spannerClient:    cfg.SpannerClient,
-		lockTable:        cfg.SpindleTable,
-		lockName:         cfg.SpindleLockName,
-		logTable:         cfg.LogTable,
-		pubsubProject:    cfg.PubSubProject,
-		pubsubClientOpts: cfg.PubSubClientOpts,
-		queue:            make(map[string]chan []byte),
-		writeTimeout:     cfg.WriteTimeout,
-		logger:           cfg.Logger,
+		group:         cfg.GroupName,
+		id:            cfg.Id,
+		spannerClient: cfg.SpannerClient,
+		lockTable:     cfg.SpindleTable,
+		lockName:      cfg.SpindleLockName,
+		logTable:      cfg.LogTable,
+		queue:         make(map[string]chan []byte),
+		writeTimeout:  cfg.WriteTimeout,
+		logger:        cfg.Logger,
 	}
 
 	if s.id == "" {
@@ -571,11 +405,6 @@ func New(cfg Config) *Store {
 
 	if s.lockName == "" {
 		s.lockName = spindleLockName
-	}
-
-	if s.pubsubProject == "" {
-		db := s.spannerClient.DatabaseName()
-		s.pubsubProject = strings.Split(db, "/")[1]
 	}
 
 	if s.writeTimeout == 0 {
