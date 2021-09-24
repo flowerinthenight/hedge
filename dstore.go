@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,8 +20,6 @@ import (
 )
 
 const (
-	spindleLockName = "dstorespindlelock"
-
 	CmdLeader = "LEADER" // are you the leader? reply: ACK
 	CmdWrite  = "WRITE"  // write key/value "WRITE base64(payload)"
 	CmdAck    = "ACK"
@@ -52,14 +49,12 @@ type LogItem struct {
 type Store struct {
 	hostPort      string // host:port
 	spannerClient *spanner.Client
-	*spindle.Lock                        // handles our distributed lock
-	lockTable     string                 // spindle lock table
-	lockName      string                 // spindle lock name
-	logTable      string                 // append-only log table
-	queue         map[string]chan []byte // for tracking outgoing/incoming messages
-	writeTimeout  int64                  // Put() timeout
-	active        int32                  // 1=running, 0=off
-	mtx           sync.Mutex             // local lock
+	*spindle.Lock        // handles our distributed lock
+	lockTable     string // spindle lock table
+	lockName      string // spindle lock name
+	logTable      string // append-only log table
+	writeTimeout  int64  // Put() timeout
+	active        int32  // 1=running, 0=off
 
 	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
@@ -423,7 +418,7 @@ type Config struct {
 	HostPort        string          // required: serves as the instance's unique id, should be ip:port
 	SpannerClient   *spanner.Client // required: Spanner client connection
 	SpindleTable    string          // required: table name for *spindle.Lock
-	SpindleLockName string          // optional: "dstorespindlelock" by default
+	SpindleLockName string          // required: spindle's lock name; should be the same for the group
 	LogTable        string          // required: table name for the append-only storage
 	WriteTimeout    int64           // optional: wait time (in ms) for Put(), default is 5000ms
 	Logger          *log.Logger     // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
@@ -437,13 +432,8 @@ func New(cfg Config) *Store {
 		lockTable:     cfg.SpindleTable,
 		lockName:      cfg.SpindleLockName,
 		logTable:      cfg.LogTable,
-		queue:         make(map[string]chan []byte),
 		writeTimeout:  cfg.WriteTimeout,
 		logger:        cfg.Logger,
-	}
-
-	if s.lockName == "" {
-		s.lockName = spindleLockName
 	}
 
 	if s.writeTimeout == 0 {
