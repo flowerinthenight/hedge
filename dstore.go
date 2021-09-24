@@ -66,7 +66,7 @@ type Store struct {
 
 // String returns some friendly information.
 func (s *Store) String() string {
-	return fmt.Sprintf("name:%s spindle:%v;%v;%v",
+	return fmt.Sprintf("hostport:%s spindle:%v;%v;%v",
 		s.hostPort,
 		s.spannerClient.DatabaseName(),
 		s.lockTable,
