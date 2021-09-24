@@ -54,12 +54,11 @@ A sample [deployment](./deployment_template.yaml) file for GKE is provided, alth
 
 Once deployed, you can test by sending PubSub messages to the created topic while checking the logs.
 ```sh
-# Test the Put() API, key=hello, value=world, you can run multiple times
+# Test the Put() API, key=hello, value=world
+# Try running multiple times to see leader and non-leader pods handling the messages.
 $ gcloud pubsub topics publish dstore-demo-pubctrl --message='put hello world'
 
 # Test the Get() API, key=hello
+# Try running multiple times to see leader and non-leader pods handling the messages.
 $ gcloud pubsub topics publish dstore-demo-pubctrl --message='get hello'
 ```
-
-
-
