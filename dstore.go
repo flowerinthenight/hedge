@@ -140,25 +140,37 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	s.logger.Printf("tcp: listen on %v", host)
 	handleConn := func(conn net.Conn) {
 		defer conn.Close()
-		buffer, err := bufio.NewReader(conn).ReadString('\n')
-		if err != nil {
-			s.logger.Println("client left")
-			return
-		}
-
-		msg := buffer[:len(buffer)-1]
-		log.Printf("[%v] message: %v", s.id, msg)
-
-		switch {
-		case strings.HasPrefix(msg, CmdLeader):
-			if hl, _ := s.HasLock(); hl {
-				reply := fmt.Sprintf("%v\n", CmdAck)
-				conn.Write([]byte(reply))
-			} else {
-				conn.Write([]byte("\n"))
+		for {
+			buffer, err := bufio.NewReader(conn).ReadString('\n')
+			if err != nil {
+				s.logger.Println("client left")
+				return
 			}
-		default:
-			log.Printf("[%v] do nothing", s.id)
+
+			msg := buffer[:len(buffer)-1]
+			s.logger.Printf("message: %v", msg)
+
+			switch {
+			case strings.HasPrefix(msg, CmdLeader):
+				if ldr, _ := s.HasLock(); ldr {
+					reply := fmt.Sprintf("%v\n", CmdAck)
+					conn.Write([]byte(reply))
+				} else {
+					conn.Write([]byte("\n"))
+					return
+				}
+			case strings.HasPrefix(msg, CmdWrite):
+				if ldr, _ := s.HasLock(); ldr {
+					reply := fmt.Sprintf("%v\n", CmdAck)
+					conn.Write([]byte(reply))
+				} else {
+					conn.Write([]byte("\n"))
+					return
+				}
+			default:
+				s.logger.Println("not supported")
+				return
+			}
 		}
 	}
 
@@ -335,6 +347,8 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return err
 	}
 
+	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to
+	// to the write for us.
 	ldrIp, err := s.Leader()
 	if err != nil {
 		return err
@@ -359,7 +373,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 
 	defer conn.Close()
 	msg := fmt.Sprintf("%v\n", CmdLeader)
-	_, err = conn.Write([]byte(msg))
+	_, err = conn.Write([]byte(msg)) // confirm leader, expect ACK
 	if err != nil {
 		s.logger.Printf("Write failed: %v", err)
 		return err
@@ -367,20 +381,38 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 
 	buffer, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		s.logger.Printf("[%v] ReadString failed: %v", s.id, err)
+		s.logger.Printf("ReadString failed: %v", err)
 		return err
 	}
 
 	msg = buffer[:len(buffer)-1]
-	log.Printf("[%v] reply: %v", s.id, msg)
+	s.logger.Printf("reply1: %v", msg)
 
-	// For non-leaders, do a 2-stage write.
-	// 1) Broadcast the write to all group members. All non-leaders receiving the message
-	// will just ignore it, including us.
-	// 2) The leader who receives the write message will write kv without the timestamp.
-	// Leader will then broadcast the 'ack' message to all members. Non-senders will just
-	// ignore the ack, but we will complete the write by updating the timestamp. Then the
-	// write is complete.
+	switch {
+	case strings.HasPrefix(msg, CmdAck):
+		msg = fmt.Sprintf("%v this_is_a_write_msg\n", CmdWrite)
+		_, err = conn.Write([]byte(msg)) // actual write request, expect ACK
+		if err != nil {
+			s.logger.Printf("Write failed: %v", err)
+			return err
+		}
+
+		buffer, err = bufio.NewReader(conn).ReadString('\n')
+		if err != nil {
+			s.logger.Printf("ReadString failed: %v", err)
+			return err
+		}
+
+		msg = buffer[:len(buffer)-1]
+		s.logger.Printf("reply2: %v", msg)
+		switch {
+		case strings.HasPrefix(msg, CmdAck):
+			s.logger.Printf("yay!")
+		default:
+			s.logger.Printf("tsk tsk")
+			return fmt.Errorf("Put failed")
+		}
+	}
 
 	// ch := make(chan []byte, 1)
 	// func() {
