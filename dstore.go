@@ -313,21 +313,21 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to do the
 	// actual write for us. Let's do a couple retries up to spindle's timeout.
 	var conn net.Conn
-	var ldrIp string
+	var ldrAddr string
 	var confirmed bool
 	for i := 0; i < 15; i++ {
 		err = func() error {
-			ldrIp, err = s.Leader()
+			ldrAddr, err = s.Leader()
 			if err != nil {
 				return err
 			}
 
-			if ldrIp == "" {
+			if ldrAddr == "" {
 				return ErrNoLeader
 			}
 
-			s.logger.Printf("current leader is %v, confirm", ldrIp)
-			addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
+			s.logger.Printf("current leader is %v, confirm", ldrAddr)
+			addr, err := net.ResolveTCPAddr("tcp4", ldrAddr)
 			if err != nil {
 				s.logger.Printf("ResolveTCPAddr failed: %v", err)
 				return err
