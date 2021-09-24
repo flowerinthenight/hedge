@@ -13,3 +13,52 @@ Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get
 * All pods within the group should be able to contact each other via TCP (address:port).
 * Each `spindle` instance id should be set using the pod's cluster IP address:port.
 * For now, `spindle`'s lock table and `dstore`'s log table are within the same database.
+* Tables for `spindle` and `dstore` need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle) for `spindle`'s DDL. For `dstore`, see below:
+
+```sql
+-- 'logtable' name is just an example
+CREATE TABLE logtable (
+    id STRING(MAX),
+    key STRING(MAX),
+    value STRING(MAX),
+    leader STRING(MAX),
+    timestamp TIMESTAMP OPTIONS (allow_commit_timestamp=true),
+) PRIMARY KEY (key, id)
+```
+
+## How to use
+Something like:
+```go
+client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
+defer client.Close()
+
+s := dstore.New(dstore.Config{
+	HostPort:        "1.2.3.4:8080",
+	SpannerClient:   client,
+	SpindleTable:    "locktable",
+	SpindleLockName: "myspindlelock",
+	LogTable:        "logtable",
+})
+
+ctx, cancel := context.WithCancel(context.Background())
+done := make(chan error, 1) // optional wait
+go s.Run(ctx, done)
+    
+// Any pod should be able to call s.Put(...) or s.Get(...) here.
+
+cancel()
+<-done
+```
+
+A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner and PubSub permissions.
+
+Once deployed, you can test by sending PubSub messages to the created topic while checking the logs.
+```sh
+# Test the Put() API, key=hello, value=world
+# Try running multiple times to see leader and non-leader pods handling the messages.
+$ gcloud pubsub topics publish dstore-demo-pubctrl --message='put hello world'
+
+# Test the Get() API, key=hello
+# Try running multiple times to see leader and non-leader pods handling the messages.
+$ gcloud pubsub topics publish dstore-demo-pubctrl --message='get hello'
+```
