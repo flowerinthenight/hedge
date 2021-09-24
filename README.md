@@ -11,4 +11,4 @@ Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get
 
 ## Prerequisites
 * All pods within the group should be able to contact each other thru TCP.
-* Each `spindle` instance id should be the pod IP address.
+* Each `spindle` instance id should be set using the pod's cluster IP address.
