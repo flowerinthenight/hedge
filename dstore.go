@@ -30,6 +30,7 @@ const (
 
 var (
 	ErrNotRunning = fmt.Errorf("dstore: not running")
+	ErrNoLeader   = fmt.Errorf("dstore: no leader available")
 )
 
 type cmd_t struct {
@@ -130,7 +131,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		for {
 			buffer, err := bufio.NewReader(conn).ReadString('\n')
 			if err != nil {
-				s.logger.Println("client left")
+				s.logger.Println("no client")
 				return
 			}
 
@@ -138,28 +139,36 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 			s.logger.Printf("message: %v", msg)
 
 			switch {
-			case strings.HasPrefix(msg, CmdLeader):
-				if ldr, _ := s.HasLock(); ldr {
-					reply := fmt.Sprintf("%v\n", CmdAck)
-					conn.Write([]byte(reply))
+			case strings.HasPrefix(msg, CmdLeader): // confirm leader only
+				if hl, _ := s.HasLock(); hl {
+					conn.Write([]byte(s.buildAckReply(nil)))
 				} else {
 					conn.Write([]byte("\n"))
-					return
+					return // done
 				}
-			case strings.HasPrefix(msg, CmdWrite):
+			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
+				reply := s.buildAckReply(nil)
 				if ldr, _ := s.HasLock(); ldr {
 					payload := strings.Split(msg, " ")[1]
-					decoded, _ := base64.StdEncoding.DecodeString(payload)
-					var kv KeyValue
-					json.Unmarshal(decoded, &kv)
-					s.Put(ctx, kv, true)
-					reply := fmt.Sprintf("%v\n", CmdAck)
-					conn.Write([]byte(reply))
-					return
+					decoded, err := base64.StdEncoding.DecodeString(payload)
+					if err != nil {
+						reply = s.buildAckReply(err)
+					} else {
+						var kv KeyValue
+						err = json.Unmarshal(decoded, &kv)
+						if err != nil {
+							reply = s.buildAckReply(err)
+						} else {
+							err = s.Put(ctx, kv, true)
+							reply = s.buildAckReply(err)
+						}
+					}
 				} else {
-					conn.Write([]byte("\n"))
-					return
+					reply = fmt.Sprintf("\n")
 				}
+
+				conn.Write([]byte(reply))
+				return
 			default:
 				s.logger.Println("not supported")
 				return
@@ -284,19 +293,19 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		s.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
 
-	id := uuid.NewString()
+	var err error
 	var tmpdirect bool
 	if len(direct) > 0 {
 		tmpdirect = direct[0]
 	}
 
-	leader, _ := s.HasLock()
-	if tmpdirect || leader {
+	hl, _ := s.HasLock()
+	if tmpdirect || hl {
 		s.logger.Printf("leader: direct write: %+v", kv)
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
-				[]interface{}{id, kv.Key, kv.Value, s.id, spanner.CommitTimestamp},
+				[]interface{}{uuid.NewString(), kv.Key, kv.Value, s.id, spanner.CommitTimestamp},
 			),
 		})
 
@@ -304,32 +313,76 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	}
 
 	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to
-	// to the write for us.
-	ldrIp, err := s.Leader()
-	if err != nil {
-		return err
+	// to the write for us. Let's do a couple retries up to spindle's timeout.
+	var conn net.Conn
+	var ldrIp string
+	var confirmed bool
+	for i := 0; i < 15; i++ {
+		err = func() error {
+			ldrIp, err = s.Leader()
+			if err != nil {
+				return err
+			}
+
+			if ldrIp == "" {
+				return ErrNoLeader
+			}
+
+			s.logger.Printf("[%v] leader is %v, send confirm", s.id, ldrIp)
+			addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
+			if err != nil {
+				s.logger.Printf("ResolveTCPAddr failed: %v", err)
+				return err
+			}
+
+			conn, err = net.DialTCP("tcp", nil, addr)
+			if err != nil {
+				s.logger.Printf("DialTCP failed: %v", err)
+				return err
+			}
+
+			msg := fmt.Sprintf("%v\n", CmdLeader)
+			_, err = conn.Write([]byte(msg)) // confirm leader, expect ACK
+			if err != nil {
+				s.logger.Printf("Write failed: %v", err)
+				return err
+			}
+
+			buffer, err := bufio.NewReader(conn).ReadString('\n')
+			if err != nil {
+				s.logger.Printf("ReadString failed: %v", err)
+				return err
+			}
+
+			msg = buffer[:len(buffer)-1]
+			s.logger.Printf("reply[1/2]: %v", msg)
+			if !strings.HasPrefix(msg, CmdAck) {
+				return fmt.Errorf("not really leader")
+			}
+
+			confirmed = true
+			return nil
+		}()
+
+		if err == nil {
+			break
+		}
+
+		time.Sleep(time.Second * 2)
 	}
 
-	if ldrIp == "" {
-		return fmt.Errorf("no leader available, try again")
+	if conn != nil {
+		defer conn.Close()
 	}
 
-	s.logger.Printf("[%v] leader is %v, send confirm", s.id, ldrIp)
-	addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
-	if err != nil {
-		s.logger.Printf("ResolveTCPAddr failed: %v", err)
-		return err
+	if !confirmed {
+		return ErrNoLeader
 	}
 
-	conn, err := net.DialTCP("tcp", nil, addr)
-	if err != nil {
-		s.logger.Printf("DialTCP failed: %v", err)
-		return err
-	}
-
-	defer conn.Close()
-	msg := fmt.Sprintf("%v\n", CmdLeader)
-	_, err = conn.Write([]byte(msg)) // confirm leader, expect ACK
+	b, _ := json.Marshal(kv)
+	encoded := base64.StdEncoding.EncodeToString(b)
+	msg := fmt.Sprintf("%v %v\n", CmdWrite, encoded)
+	_, err = conn.Write([]byte(msg)) // actual write request, expect ACK
 	if err != nil {
 		s.logger.Printf("Write failed: %v", err)
 		return err
@@ -342,37 +395,29 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	}
 
 	msg = buffer[:len(buffer)-1]
-	s.logger.Printf("reply1: %v", msg)
+	s.logger.Printf("reply[2/2]: %v", msg)
 
 	switch {
 	case strings.HasPrefix(msg, CmdAck):
-		b, _ := json.Marshal(kv)
-		encoded := base64.StdEncoding.EncodeToString(b)
-		msg = fmt.Sprintf("%v %v\n", CmdWrite, encoded)
-		_, err = conn.Write([]byte(msg)) // actual write request, expect ACK
-		if err != nil {
-			s.logger.Printf("Write failed: %v", err)
-			return err
+		ss := strings.Split(msg, " ")
+		if len(ss) > 1 { // failed
+			decoded, _ := base64.StdEncoding.DecodeString(ss[1])
+			return fmt.Errorf(string(decoded))
 		}
-
-		buffer, err = bufio.NewReader(conn).ReadString('\n')
-		if err != nil {
-			s.logger.Printf("ReadString failed: %v", err)
-			return err
-		}
-
-		msg = buffer[:len(buffer)-1]
-		s.logger.Printf("reply2: %v", msg)
-		switch {
-		case strings.HasPrefix(msg, CmdAck):
-			s.logger.Printf("yay!")
-		default:
-			s.logger.Printf("tsk tsk")
-			return fmt.Errorf("Put failed")
-		}
+	default:
+		return ErrNoLeader
 	}
 
 	return nil
+}
+
+func (s *Store) buildAckReply(err error) string {
+	if err != nil {
+		ee := base64.StdEncoding.EncodeToString([]byte(err.Error()))
+		return fmt.Sprintf("%v %v\n", CmdAck, ee)
+	} else {
+		return fmt.Sprintf("%v\n", CmdAck)
+	}
 }
 
 // Config is our configuration to New().
