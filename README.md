@@ -8,3 +8,7 @@ In a nutshell, I wanted something much simpler than using [Raft](https://raft.gi
 
 ## How does it work?
 Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get()`. All pods can serve the `Get()` calls, while the leader handles all the `Put()` calls. If a non-leader pod calls `Get()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only.
+
+## Prerequisites
+* All pods within the group should be able to contact each other thru TCP.
+* Each `spindle` instance id should be the pod IP address.
