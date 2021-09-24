@@ -44,7 +44,7 @@ ctx, cancel := context.WithCancel(context.Background())
 done := make(chan error, 1) // optional wait
 go s.Run(ctx, done)
     
-// Any pod should be able to call Put() or Get() here.
+// Any pod should be able to call s.Put(...) or s.Get(...) here.
 
 cancel()
 <-done
