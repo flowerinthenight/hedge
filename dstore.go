@@ -301,7 +301,8 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	hl, _ := s.HasLock()
 	if tmpdirect || hl {
-		s.logger.Printf("leader: direct write: %+v", kv)
+		b, _ := json.Marshal(kv)
+		s.logger.Printf("leader: direct write: %v", string(b))
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
@@ -328,7 +329,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 				return ErrNoLeader
 			}
 
-			s.logger.Printf("[%v] leader is %v, send confirm", s.id, ldrIp)
+			s.logger.Printf("current leader is %v, confirm", ldrIp)
 			addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
 			if err != nil {
 				s.logger.Printf("ResolveTCPAddr failed: %v", err)
