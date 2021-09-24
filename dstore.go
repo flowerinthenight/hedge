@@ -59,7 +59,7 @@ type Store struct {
 	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
-// String returns some friendly information.
+// String implements the Stringer interface.
 func (s *Store) String() string {
 	return fmt.Sprintf("hostport:%s spindle:%v;%v;%v",
 		s.hostPort,
@@ -112,7 +112,9 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		return err
 	}
 
+	defer listener.Close()
 	s.logger.Printf("tcp: listen on %v", s.hostPort)
+
 	handleConn := func(conn net.Conn) {
 		defer conn.Close()
 		for {
@@ -131,11 +133,11 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 					conn.Write([]byte(s.buildAckReply(nil)))
 				} else {
 					conn.Write([]byte("\n"))
-					return // done
+					return // not leader, done
 				}
 			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
 				reply := s.buildAckReply(nil)
-				if ldr, _ := s.HasLock(); ldr {
+				if hl, _ := s.HasLock(); hl {
 					payload := strings.Split(msg, " ")[1]
 					decoded, err := base64.StdEncoding.DecodeString(payload)
 					if err != nil {
@@ -151,7 +153,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 						}
 					}
 				} else {
-					reply = fmt.Sprintf("\n")
+					reply = fmt.Sprintf("\n") // not leader
 				}
 
 				conn.Write([]byte(reply))
@@ -173,13 +175,6 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 
 			go handleConn(conn)
 		}
-	}()
-
-	// Make sure we close our listener upon termination.
-	tcpctx := context.WithValue(ctx, struct{}{}, nil)
-	go func() {
-		<-tcpctx.Done()
-		listener.Close()
 	}()
 
 	s.Lock = spindle.New(
@@ -281,12 +276,13 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	}(time.Now())
 
 	var err error
-	var tmpdirect bool
+	var tmpdirect, hl bool
 	if len(direct) > 0 {
 		tmpdirect = direct[0]
+	} else {
+		hl, _ = s.HasLock()
 	}
 
-	hl, _ := s.HasLock()
 	if tmpdirect || hl {
 		b, _ := json.Marshal(kv)
 		s.logger.Printf("leader: direct write: %v", string(b))
@@ -303,21 +299,21 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to do the
 	// actual write for us. Let's do a couple retries up to spindle's timeout.
 	var conn net.Conn
-	var ldrAddr string
+	var leaderAddr string
 	var confirmed bool
 	for i := 0; i < 15; i++ {
 		err = func() error {
-			ldrAddr, err = s.Leader()
+			leaderAddr, err = s.Leader()
 			if err != nil {
 				return err
 			}
 
-			if ldrAddr == "" {
+			if leaderAddr == "" {
 				return ErrNoLeader
 			}
 
-			s.logger.Printf("current leader is %v, confirm", ldrAddr)
-			addr, err := net.ResolveTCPAddr("tcp4", ldrAddr)
+			s.logger.Printf("current leader is %v, confirm", leaderAddr)
+			addr, err := net.ResolveTCPAddr("tcp4", leaderAddr)
 			if err != nil {
 				s.logger.Printf("ResolveTCPAddr failed: %v", err)
 				return err
@@ -427,7 +423,7 @@ func New(cfg Config) *Store {
 		lockTable:     cfg.SpindleTable,
 		lockName:      cfg.SpindleLockName,
 		logTable:      cfg.LogTable,
-		writeTimeout:  cfg.WriteTimeout,
+		writeTimeout:  cfg.WriteTimeout, // not used at the moment
 		logger:        cfg.Logger,
 	}
 
