@@ -25,3 +25,27 @@ CREATE TABLE logtable (
     timestamp TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (key, id)
 ```
+
+## How to use
+Something like:
+```go
+    client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
+    defer client.Close()
+
+    s := dstore.New(dstore.Config{
+		HostPort:        "1.2.3.4:8080",
+		SpannerClient:   client,
+		SpindleTable:    "locktable",
+		SpindleLockName: "myspindlelock",
+		LogTable:        "logtable",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1) // optional wait
+    go s.Run(ctx, done)
+    
+    // Do stuff.
+
+	cancel()
+	<-done
+```
