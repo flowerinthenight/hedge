@@ -33,11 +33,6 @@ var (
 	ErrNoLeader   = fmt.Errorf("dstore: no leader available")
 )
 
-type cmd_t struct {
-	Ctrl string // WRITE|ACK
-	Data []byte // LogItem if WRITE, id if ACK
-}
-
 type KeyValue struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
@@ -82,7 +77,7 @@ func (s *Store) String() string {
 }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
-// optionally sending a error message to 'done' when finished.
+// optionally sending an error message to 'done' when finished.
 func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	var err error
 	defer func(e *error) {
@@ -219,10 +214,10 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 }
 
 // Get reads a key (or keys) from Store.
-// 0 (default) = latest only
-// -1 = all (latest to oldest, [0]=latest)
-// -2 = oldest version only
-// >0 = items behind latest; 3 means latest + 2 versions behind, [0]=latest
+// limit = 0 --> (default) latest only
+// limit = -1 --> all (latest to oldest, [0]=latest)
+// limit = -2 --> oldest version only
+// limit > 0 --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (s *Store) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
 	defer func(begin time.Time) {
 		s.logger.Printf("[Get] duration=%v", time.Since(begin))
@@ -313,8 +308,8 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		return err
 	}
 
-	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to
-	// to the write for us. Let's do a couple retries up to spindle's timeout.
+	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to do the
+	// actual write for us. Let's do a couple retries up to spindle's timeout.
 	var conn net.Conn
 	var ldrIp string
 	var confirmed bool
