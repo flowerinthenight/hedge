@@ -80,11 +80,6 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}(&err)
 
 	// Some housekeeping.
-	if len(strings.Split(s.hostPort, ":")) != 2 {
-		err = fmt.Errorf("dstore: HostPort should be in 'ip:port' format")
-		return err
-	}
-
 	if s.spannerClient == nil {
 		err = fmt.Errorf("dstore: Spanner client cannot be nil")
 		return err
