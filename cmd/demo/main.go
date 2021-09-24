@@ -22,7 +22,7 @@ var (
 	logTable     = flag.String("logtable", "testdstore_log", "the table for our log data")
 )
 
-func ctrl(app interface{}, data []byte) error {
+func onMessage(app interface{}, data []byte) error {
 	s := app.(*dstore.Store)
 	ctx := context.Background()
 
@@ -77,10 +77,7 @@ func main() {
 	log.Println(s)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-
-	go func() {
-		s.Run(ctx, done)
-	}()
+	go s.Run(ctx, done)
 
 	project := strings.Split(client.DatabaseName(), "/")[1]
 	t, err := lspubsub.GetTopic(project, "dstore-demo-pubctrl")
@@ -96,7 +93,7 @@ func main() {
 
 	donectl := make(chan error, 1)
 	go func() {
-		lscmd := lspubsub.NewLengthySubscriber(s, project, subname, ctrl, lspubsub.WithNoExtend(true))
+		lscmd := lspubsub.NewLengthySubscriber(s, project, subname, onMessage, lspubsub.WithNoExtend(true))
 		err := lscmd.Start(context.WithValue(ctx, struct{}{}, nil), donectl)
 		if err != nil {
 			log.Fatal(err)
