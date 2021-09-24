@@ -1,6 +1,7 @@
 package dstore
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,8 +25,9 @@ import (
 const (
 	spindleLockName = "dstorespindlelock"
 
-	CmdWrite = "WRITE"
-	CmdAck   = "ACK"
+	CmdLeader = "LEADER" // are you the leader? reply: ACK
+	CmdWrite  = "WRITE"  // write key/value "WRITE base64(payload)"
+	CmdAck    = "ACK"
 )
 
 var (
@@ -121,8 +123,9 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		}
 	}
 
-	host := s.id + ":8080"                        // id should be an IP
-	addr, err := net.ResolveTCPAddr("tcp4", host) // id should be an IP
+	// Setup our server for leader communication.
+	host := s.id + ":8080"
+	addr, err := net.ResolveTCPAddr("tcp4", host)
 	if err != nil {
 		s.logger.Printf("ResolveTCPAddr failed: %v", err)
 		return err
@@ -135,6 +138,18 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}
 
 	s.logger.Printf("tcp: listen on %v", host)
+	handleConn := func(conn net.Conn) {
+		defer conn.Close()
+		buffer, err := bufio.NewReader(conn).ReadString('\n')
+		if err != nil {
+			s.logger.Println("client left")
+			return
+		}
+
+		log.Println("message:", buffer[:len(buffer)-1])
+		// conn.Write(buffer)
+	}
+
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -143,12 +158,11 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 				return
 			}
 
-			// daytime := time.Now().String()
-			// conn.Write([]byte(daytime)) // don't care about return value
-			conn.Close() // we're finished with this client
+			go handleConn(conn)
 		}
 	}()
 
+	// Make sure we close our listener upon termination.
 	tcpctx := context.WithValue(ctx, struct{}{}, nil)
 	go func() {
 		<-tcpctx.Done()
@@ -291,15 +305,6 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return ErrNotRunning
 	}
 
-	ldrIp, err := s.Leader()
-	if err != nil {
-		return err
-	}
-
-	if ldrIp == "" {
-		return fmt.Errorf("no leader available, try again")
-	}
-
 	defer func(begin time.Time) {
 		s.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
@@ -317,6 +322,35 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return err
 	}
 
+	ldrIp, err := s.Leader()
+	if err != nil {
+		return err
+	}
+
+	if ldrIp == "" {
+		return fmt.Errorf("no leader available, try again")
+	}
+
+	s.logger.Printf("leader is %v, send confirm", ldrIp)
+	addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
+	if err != nil {
+		s.logger.Printf("ResolveTCPAddr failed: %v", err)
+		return err
+	}
+
+	conn, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		s.logger.Printf("DialTCP failed: %v", err)
+		return err
+	}
+
+	msg := fmt.Sprintf("%v\n", CmdLeader)
+	_, err = conn.Write([]byte(msg))
+	if err != nil {
+		s.logger.Printf("Write failed: %v", err)
+		return err
+	}
+
 	// For non-leaders, do a 2-stage write.
 	// 1) Broadcast the write to all group members. All non-leaders receiving the message
 	// will just ignore it, including us.
@@ -325,41 +359,41 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 	// ignore the ack, but we will complete the write by updating the timestamp. Then the
 	// write is complete.
 
-	ch := make(chan []byte, 1)
-	func() {
-		s.mtx.Lock()
-		defer s.mtx.Unlock()
-		s.queue[id] = ch
-	}()
+	// ch := make(chan []byte, 1)
+	// func() {
+	// 	s.mtx.Lock()
+	// 	defer s.mtx.Unlock()
+	// 	s.queue[id] = ch
+	// }()
 
-	li := LogItem{
-		Id:    id,
-		Key:   kv.Key,
-		Value: kv.Value,
-	}
+	// li := LogItem{
+	// 	Id:    id,
+	// 	Key:   kv.Key,
+	// 	Value: kv.Value,
+	// }
 
-	// Broadcast write to leader.
-	b, _ := json.Marshal(li)
-	c := cmd_t{Ctrl: CmdWrite, Data: b}
-	b, _ = json.Marshal(c)
-	res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
-	_, err = res.Get(ctx)
-	if err != nil {
-		return err
-	}
+	// // Broadcast write to leader.
+	// b, _ := json.Marshal(li)
+	// c := cmd_t{Ctrl: CmdWrite, Data: b}
+	// b, _ = json.Marshal(c)
+	// res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
+	// _, err = res.Get(ctx)
+	// if err != nil {
+	// 	return err
+	// }
 
-	// Read reply, if any.
-	var timeout = time.Second * time.Duration(s.writeTimeout)
-	subctx := context.WithValue(ctx, struct{}{}, nil)
+	// // Read reply, if any.
+	// var timeout = time.Second * time.Duration(s.writeTimeout)
+	// subctx := context.WithValue(ctx, struct{}{}, nil)
 
-	select {
-	case <-subctx.Done():
-		break
-	case <-time.After(timeout):
-		break
-	case b := <-ch:
-		_ = b
-	}
+	// select {
+	// case <-subctx.Done():
+	// 	break
+	// case <-time.After(timeout):
+	// 	break
+	// case b := <-ch:
+	// 	_ = b
+	// }
 
 	return nil
 }
