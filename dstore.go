@@ -57,9 +57,6 @@ type Store struct {
 	group         string // fleet's name
 	id            string // this instance's unique id
 	spannerClient *spanner.Client
-
-	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
-
 	*spindle.Lock                        // handles our distributed lock
 	lockTable     string                 // spindle lock table
 	lockName      string                 // spindle lock name
@@ -68,6 +65,8 @@ type Store struct {
 	writeTimeout  int64                  // Put() timeout
 	active        int32                  // 1=running, 0=off
 	mtx           sync.Mutex             // local lock
+
+	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
 // String returns some friendly information.
@@ -91,6 +90,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		}
 	}(&err)
 
+	// Some housekeeping.
 	if s.spannerClient == nil {
 		err = fmt.Errorf("dstore: Spanner client cannot be nil")
 		return err
@@ -148,6 +148,11 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 				}
 			case strings.HasPrefix(msg, CmdWrite):
 				if ldr, _ := s.HasLock(); ldr {
+					payload := strings.Split(msg, " ")[1]
+					decoded, _ := base64.StdEncoding.DecodeString(payload)
+					var kv KeyValue
+					json.Unmarshal(decoded, &kv)
+					s.Put(ctx, kv, true)
 					reply := fmt.Sprintf("%v\n", CmdAck)
 					conn.Write([]byte(reply))
 					return
