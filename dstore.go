@@ -146,8 +146,20 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 			return
 		}
 
-		log.Println("message:", buffer[:len(buffer)-1])
-		// conn.Write(buffer)
+		msg := buffer[:len(buffer)-1]
+		log.Printf("[%v] message: %v", s.id, msg)
+
+		switch {
+		case strings.HasPrefix(msg, CmdLeader):
+			if hl, _ := s.HasLock(); hl {
+				reply := fmt.Sprintf("%v\n", CmdAck)
+				conn.Write([]byte(reply))
+			} else {
+				conn.Write([]byte("\n"))
+			}
+		default:
+			log.Printf("[%v] do nothing", s.id)
+		}
 	}
 
 	go func() {
@@ -312,6 +324,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 	id := uuid.NewString()
 	leader, _ := s.HasLock()
 	if leader { // we're in luck, quite straightforward
+		s.logger.Printf("leader: direct write: %+v", kv)
 		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(s.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
@@ -331,7 +344,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return fmt.Errorf("no leader available, try again")
 	}
 
-	s.logger.Printf("leader is %v, send confirm", ldrIp)
+	s.logger.Printf("[%v] leader is %v, send confirm", s.id, ldrIp)
 	addr, err := net.ResolveTCPAddr("tcp4", ldrIp+":8080")
 	if err != nil {
 		s.logger.Printf("ResolveTCPAddr failed: %v", err)
@@ -344,12 +357,22 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return err
 	}
 
+	defer conn.Close()
 	msg := fmt.Sprintf("%v\n", CmdLeader)
 	_, err = conn.Write([]byte(msg))
 	if err != nil {
 		s.logger.Printf("Write failed: %v", err)
 		return err
 	}
+
+	buffer, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		s.logger.Printf("[%v] ReadString failed: %v", s.id, err)
+		return err
+	}
+
+	msg = buffer[:len(buffer)-1]
+	log.Printf("[%v] reply: %v", s.id, msg)
 
 	// For non-leaders, do a 2-stage write.
 	// 1) Broadcast the write to all group members. All non-leaders receiving the message

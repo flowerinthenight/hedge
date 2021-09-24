@@ -96,7 +96,7 @@ func main() {
 
 	donectl := make(chan error, 1)
 	go func() {
-		lscmd := lspubsub.NewLengthySubscriber(s, project, subname, ctrl)
+		lscmd := lspubsub.NewLengthySubscriber(s, project, subname, ctrl, lspubsub.WithNoExtend(true))
 		err := lscmd.Start(context.WithValue(ctx, struct{}{}, nil), donectl)
 		if err != nil {
 			log.Fatal(err)
