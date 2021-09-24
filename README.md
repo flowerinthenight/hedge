@@ -18,10 +18,10 @@ Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get
 ```sql
 -- 'logtable' name is just an example
 CREATE TABLE logtable (
-  id STRING(MAX),
-  key STRING(MAX),
-  value STRING(MAX),
-  leader STRING(MAX),
-  timestamp TIMESTAMP OPTIONS (allow_commit_timestamp=true),
+    id STRING(MAX),
+    key STRING(MAX),
+    value STRING(MAX),
+    leader STRING(MAX),
+    timestamp TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (key, id)
 ```
