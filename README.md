@@ -10,6 +10,6 @@ In a nutshell, I wanted something much simpler than using [Raft](https://raft.gi
 Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get()`. All pods can serve the `Get()` calls, while the leader handles all the `Put()` calls. If a non-leader pod calls `Get()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only.
 
 ## Prerequisites
-* All pods within the group should be able to contact each other thru TCP.
+* All pods within the group should be able to contact each other via TCP (address:port).
 * Each `spindle` instance id should be set using the pod's cluster IP address:port.
 * For now, `spindle`'s lock table and `dstore`'s log table are within the same database.
