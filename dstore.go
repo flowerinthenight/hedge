@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -119,6 +120,40 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 			return err
 		}
 	}
+
+	host := s.id + ":8080"                        // id should be an IP
+	addr, err := net.ResolveTCPAddr("tcp4", host) // id should be an IP
+	if err != nil {
+		s.logger.Printf("ResolveTCPAddr failed: %v", err)
+		return err
+	}
+
+	listener, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		s.logger.Printf("ResolveTCPAddr failed: %v", err)
+		return err
+	}
+
+	s.logger.Printf("tcp: listen on %v", host)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				s.logger.Printf("listener.Accept failed: %v", err)
+				return
+			}
+
+			// daytime := time.Now().String()
+			// conn.Write([]byte(daytime)) // don't care about return value
+			conn.Close() // we're finished with this client
+		}
+	}()
+
+	tcpctx := context.WithValue(ctx, struct{}{}, nil)
+	go func() {
+		<-tcpctx.Done()
+		listener.Close()
+	}()
 
 	s.Lock = spindle.New(
 		s.spannerClient,
@@ -256,6 +291,15 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 		return ErrNotRunning
 	}
 
+	ldrIp, err := s.Leader()
+	if err != nil {
+		return err
+	}
+
+	if ldrIp == "" {
+		return fmt.Errorf("no leader available, try again")
+	}
+
 	defer func(begin time.Time) {
 		s.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
@@ -299,7 +343,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue) error {
 	c := cmd_t{Ctrl: CmdWrite, Data: b}
 	b, _ = json.Marshal(c)
 	res := s.pub.Publish(ctx, &pubsub.Message{Data: b})
-	_, err := res.Get(ctx)
+	_, err = res.Get(ctx)
 	if err != nil {
 		return err
 	}
