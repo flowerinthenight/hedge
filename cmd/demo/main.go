@@ -16,7 +16,7 @@ import (
 
 var (
 	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
-	group        = flag.String("group", "dstore-demo-group", "group name, common to all instances")
+	lockName     = flag.String("lockname", "dstore-demo-group", "lock name, common to all instances")
 	id           = flag.String("id", os.Getenv("K8S_POD_IP"), "this instance's unique id within the group") // see deployment_template.yaml
 	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
 	logTable     = flag.String("logtable", "testdstore_log", "the table for our log data")
@@ -67,11 +67,11 @@ func main() {
 	}
 
 	s := dstore.New(dstore.Config{
-		GroupName:     *group,
-		Id:            *id,
-		SpannerClient: client,
-		SpindleTable:  *spindleTable,
-		LogTable:      *logTable,
+		Id:              *id,
+		SpannerClient:   client,
+		SpindleTable:    *spindleTable,
+		SpindleLockName: *lockName,
+		LogTable:        *logTable,
 	})
 
 	log.Println(s)

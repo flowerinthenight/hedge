@@ -50,7 +50,6 @@ type LogItem struct {
 
 // Store is our main distributed, append-only log storage object.
 type Store struct {
-	group         string // fleet's name
 	id            string // this instance's unique id
 	spannerClient *spanner.Client
 	*spindle.Lock                        // handles our distributed lock
@@ -67,8 +66,7 @@ type Store struct {
 
 // String returns some friendly information.
 func (s *Store) String() string {
-	return fmt.Sprintf("name:%v/%s spindle:%v;%v;%v",
-		s.group,
+	return fmt.Sprintf("name:%s spindle:%v;%v;%v",
 		s.id,
 		s.spannerClient.DatabaseName(),
 		s.lockTable,
@@ -193,7 +191,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	s.Lock = spindle.New(
 		s.spannerClient,
 		s.lockTable,
-		fmt.Sprintf("dstore/spindle/lockname/%v", s.group),
+		fmt.Sprintf("dstore/spindle/lockname/%v", s.lockName),
 		spindle.WithDuration(30000), // 30s duration
 		spindle.WithId(s.id),
 	)
@@ -418,10 +416,6 @@ func (s *Store) buildAckReply(err error) string {
 
 // Config is our configuration to New().
 type Config struct {
-	// Required: the group name this instance belongs to.
-	// NOTE: Will also be used as PubSub topic name, so naming conventions apply.
-	// See https://cloud.google.com/pubsub/docs/admin#resource_names
-	GroupName       string
 	Id              string          // optional: this instance's unique id, will generate uuid if empty
 	SpannerClient   *spanner.Client // required: Spanner client, project is implicit, will not use 'PubSubProject'
 	SpindleTable    string          // required: table name for *spindle.Lock
@@ -434,7 +428,6 @@ type Config struct {
 // New creates an instance of Store.
 func New(cfg Config) *Store {
 	s := &Store{
-		group:         cfg.GroupName,
 		id:            cfg.Id,
 		spannerClient: cfg.SpannerClient,
 		lockTable:     cfg.SpindleTable,
