@@ -39,7 +39,7 @@ spec:
           curl -s -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' --retry 30 --retry-connrefused --retry-max-time 30 > /dev/null || exit 1
       containers:
       - name: dstoredemo
-        image: quay.io/flowerinthenight/dstoredemo:v0.0.10
+        image: quay.io/flowerinthenight/dstoredemo:v0.1.0
         imagePullPolicy: Always
         # TODO: Update as needed.
         args: ["-db=projects/{project}/instances/{instance}/databases/{database}"]
