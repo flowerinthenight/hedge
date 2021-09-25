@@ -354,7 +354,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			msg = buffer[:len(buffer)-1]
 			s.logger.Printf("reply[1/2]: %v", msg)
 			if !strings.HasPrefix(msg, CmdAck) {
-				return fmt.Errorf("not really leader")
+				return ErrNoLeader
 			}
 
 			confirmed = true
