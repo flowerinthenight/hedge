@@ -11,7 +11,7 @@ Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get
 
 ## Prerequisites
 * All pods within the group should be able to contact each other via TCP (address:port).
-* Each `spindle` instance id should be set using the pod's cluster IP address:port.
+* Each `dstore` instance id should be set using the pod's cluster IP address:port.
 * For now, `spindle`'s lock table and `dstore`'s log table are within the same database.
 * Tables for `spindle` and `dstore` need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle) for `spindle`'s DDL. For `dstore`, see below:
 
