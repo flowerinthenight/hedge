@@ -362,7 +362,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		}()
 
 		tcnt++
-		if tcnt >= tlimit {
+		if err == nil || (tcnt > tlimit) {
 			break
 		}
 	}
