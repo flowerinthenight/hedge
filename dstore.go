@@ -47,16 +47,15 @@ type LogItem struct {
 
 // Store is our main distributed, append-only log storage object.
 type Store struct {
-	hostPort      string // host:port
-	spannerClient *spanner.Client
-	*spindle.Lock        // handles our distributed lock
-	lockTable     string // spindle lock table
-	lockName      string // spindle lock name
-	logTable      string // append-only log table
-	writeTimeout  int64  // Put() timeout
-	active        int32  // 1=running, 0=off
-
-	logger *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
+	hostPort      string          // this instance's id; address:port
+	spannerClient *spanner.Client // both for spindle and dstore
+	*spindle.Lock                 // handles our distributed lock
+	lockTable     string          // spindle lock table
+	lockName      string          // spindle lock name
+	lockTimeout   int64           // spindle's lock lease duration in ms
+	logTable      string          // append-only log table
+	active        int32           // 1=running, 0=off
+	logger        *log.Logger     // can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
 // String implements the Stringer interface.
@@ -181,7 +180,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		s.spannerClient,
 		s.lockTable,
 		fmt.Sprintf("dstore/spindle/lockname/%v", s.lockName),
-		spindle.WithDuration(30000), // 30s duration
+		spindle.WithDuration(s.lockTimeout),
 		spindle.WithId(s.hostPort),
 	)
 
@@ -298,22 +297,36 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to do the
 	// actual write for us. Let's do a couple retries up to spindle's timeout.
+
 	var conn net.Conn
-	var leaderAddr string
+	var leader string
 	var confirmed bool
-	for i := 0; i < 15; i++ {
+	first := make(chan struct{}, 1)
+	first <- struct{}{} // immediate
+	tcnt, tlimit := int64(0), (s.lockTimeout/2000)*2
+	ticker := time.NewTicker(time.Second * 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return context.Canceled
+		case <-first:
+		case <-ticker.C:
+		}
+
 		err = func() error {
-			leaderAddr, err = s.Leader()
+			leader, err = s.Leader()
 			if err != nil {
 				return err
 			}
 
-			if leaderAddr == "" {
+			if leader == "" {
 				return ErrNoLeader
 			}
 
-			s.logger.Printf("current leader is %v, confirm", leaderAddr)
-			addr, err := net.ResolveTCPAddr("tcp4", leaderAddr)
+			s.logger.Printf("current leader is %v, confirm", leader)
+			addr, err := net.ResolveTCPAddr("tcp4", leader)
 			if err != nil {
 				s.logger.Printf("ResolveTCPAddr failed: %v", err)
 				return err
@@ -348,11 +361,10 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			return nil
 		}()
 
-		if err == nil {
+		tcnt++
+		if tcnt >= tlimit {
 			break
 		}
-
-		time.Sleep(time.Second * 2)
 	}
 
 	if conn != nil {
@@ -410,8 +422,8 @@ type Config struct {
 	SpannerClient   *spanner.Client // required: Spanner client connection
 	SpindleTable    string          // required: table name for *spindle.Lock
 	SpindleLockName string          // required: spindle's lock name; should be the same for the group
+	SpindleTimeout  int64           // optional: spindle's lease duration in ms, default to 30s, min=2s
 	LogTable        string          // required: table name for the append-only storage
-	WriteTimeout    int64           // optional: wait time (in ms) for Put(), default is 5000ms
 	Logger          *log.Logger     // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
@@ -422,13 +434,16 @@ func New(cfg Config) *Store {
 		spannerClient: cfg.SpannerClient,
 		lockTable:     cfg.SpindleTable,
 		lockName:      cfg.SpindleLockName,
+		lockTimeout:   cfg.SpindleTimeout,
 		logTable:      cfg.LogTable,
-		writeTimeout:  cfg.WriteTimeout, // not used at the moment
 		logger:        cfg.Logger,
 	}
 
-	if s.writeTimeout == 0 {
-		s.writeTimeout = 5000
+	switch {
+	case s.lockTimeout == 0:
+		s.lockTimeout = 30000 // default
+	case s.lockTimeout < 2000:
+		s.lockTimeout = 2000 // minimum
 	}
 
 	if s.logger == nil {
