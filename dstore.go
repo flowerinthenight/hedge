@@ -30,10 +30,11 @@ var (
 	ErrNoLeader   = fmt.Errorf("dstore: no leader available")
 )
 
+// KeyValue is for Put()/Get() callers.
 type KeyValue struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
-	Timestamp time.Time `json:"timestamp"` // ignored in Put()
+	Timestamp time.Time `json:"timestamp"` // read-only, populated when Get()
 }
 
 // LogItem represents an item in our log.
@@ -42,7 +43,7 @@ type LogItem struct {
 	Key       string
 	Value     string
 	Leader    string
-	Timestamp time.Time // ignored in Put()
+	Timestamp time.Time
 }
 
 // Store is our main distributed, append-only log storage object.
@@ -151,7 +152,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 						}
 					}
 				} else {
-					reply = "\n" // not leader, possible even if confirmed
+					reply = "\n" // not leader, possible even if previously confirmed
 				}
 
 				conn.Write([]byte(reply))
