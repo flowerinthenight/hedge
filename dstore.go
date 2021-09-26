@@ -306,7 +306,6 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	// actual write for us. Let's do a couple retries up to spindle's timeout.
 
 	var conn net.Conn
-	var leader string
 	var confirmed bool
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediate
@@ -323,7 +322,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		}
 
 		err = func() error {
-			leader, err = s.Leader()
+			leader, err := s.Leader()
 			if err != nil {
 				return err
 			}
@@ -339,20 +338,21 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 				return err
 			}
 
-			conn, err = net.DialTCP("tcp", nil, addr)
+			lconn, err := net.DialTCP("tcp", nil, addr)
 			if err != nil {
 				s.logger.Printf("DialTCP failed: %v", err)
 				return err
 			}
 
+			defer lconn.Close()
 			msg := fmt.Sprintf("%v\n", CmdLeader)
-			_, err = conn.Write([]byte(msg)) // confirm leader, expect ACK
+			_, err = lconn.Write([]byte(msg)) // confirm leader, expect ACK
 			if err != nil {
 				s.logger.Printf("Write failed: %v", err)
 				return err
 			}
 
-			buffer, err := bufio.NewReader(conn).ReadString('\n')
+			buffer, err := bufio.NewReader(lconn).ReadString('\n')
 			if err != nil {
 				s.logger.Printf("ReadString failed: %v", err)
 				return err
@@ -362,6 +362,13 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			s.logger.Printf("reply[1/2]: %v", msg)
 			if !strings.HasPrefix(msg, CmdAck) {
 				return ErrNoLeader
+			}
+
+			// Create a new connection to the confirmed leader.
+			conn, err = net.DialTCP("tcp", nil, addr)
+			if err != nil {
+				s.logger.Printf("DialTCP failed: %v", err)
+				return err
 			}
 
 			confirmed = true
