@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,9 +20,9 @@ import (
 )
 
 const (
-	CmdLeader = "LEADER" // are you the leader? reply: ACK
-	CmdWrite  = "WRITE"  // write key/value "WRITE base64(payload)"
-	CmdAck    = "ACK"
+	CmdLeader = "LEADER" // for leader confirmation, reply="ACK"
+	CmdWrite  = "WRITE"  // write key/value, fmt="WRITE base64(payload)"
+	CmdAck    = "ACK"    // leader reply, fmt="ACK"|"ACK base64(err)"
 )
 
 var (
@@ -58,7 +57,6 @@ type Store struct {
 	*spindle.Lock             // handles our distributed lock
 	active        int32       // 1=running, 0=off
 	logger        *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
-	mtx           sync.Mutex  // internal mutex
 }
 
 // String implements the Stringer interface.
@@ -110,7 +108,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		s.logger.Printf("ResolveTCPAddr failed: %v", err)
+		s.logger.Printf("ListenTCP failed: %v", err)
 		return err
 	}
 
@@ -120,23 +118,21 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	handleConn := func(conn net.Conn) {
 		defer conn.Close()
 		for {
-			buffer, err := bufio.NewReader(conn).ReadString('\n')
+			msg, err := s.recv(conn)
 			if err != nil {
-				s.logger.Println("no client")
+				s.logger.Printf("recv failed: %v", err)
 				return
 			}
 
-			msg := buffer[:len(buffer)-1]
-			s.logger.Printf("message: %v", msg)
-
 			switch {
 			case strings.HasPrefix(msg, CmdLeader): // confirm leader only
-				if hl, _ := s.HasLock(); hl {
-					conn.Write([]byte(s.buildAckReply(nil)))
-				} else {
-					conn.Write([]byte("\n"))
-					return // not leader, done
+				reply := s.buildAckReply(nil)
+				if hl, _ := s.HasLock(); !hl {
+					reply = "\n"
 				}
+
+				conn.Write([]byte(reply))
+				return // always end confirm
 			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
 				reply := s.buildAckReply(nil)
 				if hl, _ := s.HasLock(); hl {
@@ -155,13 +151,12 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 						}
 					}
 				} else {
-					reply = fmt.Sprintf("\n") // not leader
+					reply = "\n" // not leader, possible even if confirmed
 				}
 
 				conn.Write([]byte(reply))
-				return
+				return // always end write
 			default:
-				s.logger.Println("not supported")
 				return
 			}
 		}
@@ -267,7 +262,8 @@ order by timestamp limit 1`
 	return ret, nil
 }
 
-// Put saves a key/value to Store.
+// Put saves a key/value to Store. This call will try to block, at least roughly until spindle's
+// timeout, to wait for the leader's availability to do actual writes before returning.
 func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	if atomic.LoadInt32(&s.active) != 1 {
 		return ErrNotRunning
@@ -276,10 +272,6 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	defer func(begin time.Time) {
 		s.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
-
-	// Best-effort write order preservation; only one Put() at a time.
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
 
 	var err error
 	var tmpdirect, hl bool
@@ -308,9 +300,9 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	var conn net.Conn
 	var confirmed bool
 	first := make(chan struct{}, 1)
-	first <- struct{}{} // immediate
+	first <- struct{}{} // immediately the first time
 	tcnt, tlimit := int64(0), (s.lockTimeout/2000)*2
-	ticker := time.NewTicker(time.Second * 2)
+	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
 	for {
@@ -322,6 +314,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		}
 
 		err = func() error {
+			timeout := time.Second * 5
 			leader, err := s.Leader()
 			if err != nil {
 				return err
@@ -332,42 +325,28 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			}
 
 			s.logger.Printf("current leader is %v, confirm", leader)
-			addr, err := net.ResolveTCPAddr("tcp4", leader)
+			lconn, err := net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				s.logger.Printf("ResolveTCPAddr failed: %v", err)
-				return err
-			}
-
-			lconn, err := net.DialTCP("tcp", nil, addr)
-			if err != nil {
-				s.logger.Printf("DialTCP failed: %v", err)
+				s.logger.Printf("DialTimeout failed: %v", err)
 				return err
 			}
 
 			defer lconn.Close()
-			msg := fmt.Sprintf("%v\n", CmdLeader)
-			_, err = lconn.Write([]byte(msg)) // confirm leader, expect ACK
+			reply, err := s.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
 			if err != nil {
-				s.logger.Printf("Write failed: %v", err)
+				s.logger.Printf("send failed: %v", err)
 				return err
 			}
 
-			buffer, err := bufio.NewReader(lconn).ReadString('\n')
-			if err != nil {
-				s.logger.Printf("ReadString failed: %v", err)
-				return err
-			}
-
-			msg = buffer[:len(buffer)-1]
-			s.logger.Printf("reply[1/2]: %v", msg)
-			if !strings.HasPrefix(msg, CmdAck) {
+			s.logger.Printf("reply[1/2]: %v", reply)
+			if !strings.HasPrefix(reply, CmdAck) {
 				return ErrNoLeader
 			}
 
 			// Create a new connection to the confirmed leader.
-			conn, err = net.DialTCP("tcp", nil, addr)
+			conn, err = net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				s.logger.Printf("DialTCP failed: %v", err)
+				s.logger.Printf("DialTimeout failed: %v", err)
 				return err
 			}
 
@@ -390,35 +369,48 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	}
 
 	b, _ := json.Marshal(kv)
-	encoded := base64.StdEncoding.EncodeToString(b)
-	msg := fmt.Sprintf("%v %v\n", CmdWrite, encoded)
-	_, err = conn.Write([]byte(msg)) // actual write request, expect ACK
+	enc := base64.StdEncoding.EncodeToString(b)
+	reply, err := s.send(conn, fmt.Sprintf("%v %v\n", CmdWrite, enc))
 	if err != nil {
-		s.logger.Printf("Write failed: %v", err)
+		s.logger.Printf("send failed: %v", err)
 		return err
 	}
 
-	buffer, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		s.logger.Printf("ReadString failed: %v", err)
-		return err
-	}
-
-	msg = buffer[:len(buffer)-1]
-	s.logger.Printf("reply[2/2]: %v", msg)
+	s.logger.Printf("reply[2/2]: %v", reply)
 
 	switch {
-	case strings.HasPrefix(msg, CmdAck):
-		ss := strings.Split(msg, " ")
+	case strings.HasPrefix(reply, CmdAck):
+		ss := strings.Split(reply, " ")
 		if len(ss) > 1 { // failed
-			decoded, _ := base64.StdEncoding.DecodeString(ss[1])
-			return fmt.Errorf(string(decoded))
+			dec, _ := base64.StdEncoding.DecodeString(ss[1])
+			return fmt.Errorf(string(dec))
 		}
 	default:
 		return ErrNoLeader
 	}
 
 	return nil
+}
+
+func (s *Store) send(conn net.Conn, msg string) (string, error) {
+	_, err := conn.Write([]byte(msg))
+	if err != nil {
+		s.logger.Printf("Write failed: %v", err)
+		return "", err
+	}
+
+	return s.recv(conn)
+}
+
+func (s *Store) recv(conn net.Conn) (string, error) {
+	buffer, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		s.logger.Printf("ReadString failed: %v", err)
+		return "", err
+	}
+
+	reply := buffer[:len(buffer)-1]
+	return reply, nil
 }
 
 func (s *Store) buildAckReply(err error) string {

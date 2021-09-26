@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"os"
@@ -52,7 +53,8 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		log.Printf("%+v", v)
+		b, _ := json.Marshal(v)
+		log.Printf("%v", string(b))
 	}
 
 	return nil
