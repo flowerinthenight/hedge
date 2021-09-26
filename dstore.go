@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,13 +50,15 @@ type LogItem struct {
 type Store struct {
 	hostPort      string          // this instance's id; address:port
 	spannerClient *spanner.Client // both for spindle and dstore
-	*spindle.Lock                 // handles our distributed lock
 	lockTable     string          // spindle lock table
 	lockName      string          // spindle lock name
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
-	active        int32           // 1=running, 0=off
-	logger        *log.Logger     // can be silenced by `log.New(ioutil.Discard, "", 0)`
+
+	*spindle.Lock             // handles our distributed lock
+	active        int32       // 1=running, 0=off
+	logger        *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
+	mtx           sync.Mutex  // internal mutex
 }
 
 // String implements the Stringer interface.
@@ -273,6 +276,10 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	defer func(begin time.Time) {
 		s.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
+
+	// Best-effort write order preservation; only one Put() at a time.
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	var err error
 	var tmpdirect, hl bool
