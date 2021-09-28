@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	CmdLeader = "LEADER" // for leader confirmation, reply="ACK"
-	CmdWrite  = "WRITE"  // write key/value, fmt="WRITE base64(payload)"
-	CmdAck    = "ACK"    // leader reply, fmt="ACK"|"ACK base64(err)"
+	CmdLeader     = "LDR" // for leader confirmation, reply="ACK"
+	CmdWrite      = "PUT" // write key/value, fmt="PUT base64(payload)"
+	CmdAck        = "ACK" // leader reply, fmt="ACK"|"ACK base64(err)"
+	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name}"
+	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}"
+	CmdSemRelease = "SER" // release semaphore, fmt="SER {name} {caller}"
 )
 
 var (
@@ -196,6 +199,15 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 
 	<-ctx.Done() // wait for termination
 	return nil
+}
+
+// NewSemaphore returns a distributed semaphore object.
+func (o *Op) NewSemaphore(name string, limit int64) (*Semaphore, error) {
+	if atomic.LoadInt32(&o.active) != 1 {
+		return nil, ErrNotRunning
+	}
+
+	return &Semaphore{name, limit, o}, nil
 }
 
 // Get reads a key (or keys) from Op.
