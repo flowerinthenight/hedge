@@ -1,6 +1,6 @@
-[![main](https://github.com/flowerinthenight/dstore/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/dstore/actions/workflows/main.yml)
+[![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
 
-## dstore
+## hedge
 A slightly opinionated distributed key/value store library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) for Kubernetes deployments. It provides a consistent, append-only, [Spanner](https://cloud.google.com/spanner)-backed key/value storage for all pods in a deployment group.
 
 ## Why?
@@ -11,9 +11,9 @@ Leader election is handled by `spindle`. Two APIs are provided, `Put()` and `Get
 
 ## Prerequisites
 * All pods within the group should be able to contact each other via TCP (address:port).
-* Each `dstore`'s instance id should be set using the pod's cluster IP address:port.
-* For now, `spindle`'s lock table and `dstore`'s log table are within the same database.
-* Tables for `spindle` and `dstore` need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle#usage) for `spindle`'s DDL. For `dstore`, see below:
+* Each `hedge`'s instance id should be set using the pod's cluster IP address:port.
+* For now, `spindle`'s lock table and `hedge`'s log table are within the same database.
+* Tables for `spindle` and `hedge` need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle#usage) for `spindle`'s DDL. For `hedge`, see below:
 
 ```sql
 -- 'logtable' name is just an example
@@ -32,7 +32,7 @@ Something like:
 client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
 defer client.Close()
 
-s := dstore.New(dstore.Config{
+s := hedge.New(hedge.Config{
 	HostPort:        "1.2.3.4:8080",
 	SpannerClient:   client,
 	SpindleTable:    "locktable",
@@ -56,9 +56,9 @@ Once deployed, you can test by sending PubSub messages to the created topic whil
 ```sh
 # Test the Put() API, key=hello, value=world
 # Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish dstore-demo-pubctrl --message='put hello world'
+$ gcloud pubsub topics publish hedge-demo-pubctrl --message='put hello world'
 
 # Test the Get() API, key=hello
 # Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish dstore-demo-pubctrl --message='get hello'
+$ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
 ```

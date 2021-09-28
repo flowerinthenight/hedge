@@ -1,9 +1,8 @@
-module github.com/flowerinthenight/dstore
+module github.com/flowerinthenight/hedge
 
 go 1.17
 
 require (
-	cloud.google.com/go/pubsub v1.17.0
 	cloud.google.com/go/spanner v1.25.0
 	github.com/flowerinthenight/longsub v1.2.1
 	github.com/flowerinthenight/spindle v1.0.2
@@ -13,6 +12,7 @@ require (
 
 require (
 	cloud.google.com/go v0.95.0 // indirect
+	cloud.google.com/go/pubsub v1.17.0 // indirect
 	github.com/NYTimes/gizmo v1.3.6 // indirect
 	github.com/dchest/uniuri v0.0.0-20200228104902-7aecb25e1fe5 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

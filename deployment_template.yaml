@@ -1,34 +1,34 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: dstoredemo
+  name: hedgedemo
   # TODO: (optional) Update {project} to your project id.
   annotations:
-    iam.gke.io/gcp-service-account: dstoredemo@{project}.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: hedgedemo@{project}.iam.gserviceaccount.com
 
 ---
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dstoredemo
+  name: hedgedemo
 spec:
   selector:
     matchLabels:
-      app: dstoredemo
+      app: hedgedemo
   replicas: 3
   revisionHistoryLimit: 5
   template:
     metadata:
       labels:
-        app: dstoredemo
+        app: hedgedemo
     spec:
       # This sample uses GKE's Workload Identity to authenticate against GCP services.
-      # 'dstoredemo' service account here is mapped to a GCP's IAM service account
+      # 'hedgedemo' service account here is mapped to a GCP's IAM service account
       # that has access to Spanner and PubSub.
       # If you're not using Workload Identity, you can also use a service account key
       # and set the GOOGLE_APPLICATION_CREDENTIALS environment variable.
-      serviceAccountName: dstoredemo
+      serviceAccountName: hedgedemo
       initContainers:
       - image: gcr.io/google.com/cloudsdktool/cloud-sdk:358.0.0-alpine
         name: workload-identity-initcontainer
@@ -38,13 +38,13 @@ spec:
         - |
           curl -s -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' --retry 30 --retry-connrefused --retry-max-time 30 > /dev/null || exit 1
       containers:
-      - name: dstoredemo
-        image: quay.io/flowerinthenight/dstoredemo:v0.2.1
+      - name: hedgedemo
+        image: quay.io/flowerinthenight/hedgedemo:v0.2.1
         imagePullPolicy: Always
         # TODO: Update as needed.
         args: ["-db=projects/{project}/instances/{instance}/databases/{database}"]
         env:
-        # Downward value to get pod IP. We'll use this as our dstore instance id.
+        # Downward value to get pod IP. We'll use this as our hedge instance id.
         - name: K8S_POD_IP
           valueFrom:
             fieldRef:
@@ -57,13 +57,13 @@ spec:
         - containerPort: 8080
       # Uncomment the section below and the env variable above to use GOOGLE_APPLICATION_CREDENTIALS
       # for authentication. You can upload a service account JSON file thru:
-      # kubectl create secret generic dstoredemo-keyfile --from-file svcacct.json
+      # kubectl create secret generic hedgedemo-keyfile --from-file svcacct.json
       #
       #   volumeMounts:
       #   - name: keyfile
-      #     mountPath: "/etc/dstoredemo"
+      #     mountPath: "/etc/hedgedemo"
       #     readOnly: true
       # volumes:
       # - name: keyfile
       #   secret:
-      #     secretName: dstoredemo-keyfile
+      #     secretName: hedgedemo-keyfile

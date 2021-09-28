@@ -11,20 +11,20 @@ import (
 	"syscall"
 
 	"cloud.google.com/go/spanner"
-	"github.com/flowerinthenight/dstore"
+	"github.com/flowerinthenight/hedge"
 	lspubsub "github.com/flowerinthenight/longsub/gcppubsub"
 )
 
 var (
 	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
-	lockName     = flag.String("lockname", "dstore-demo-group", "lock name, common to all instances")
+	lockName     = flag.String("lockname", "hedge-demo-group", "lock name, common to all instances")
 	id           = flag.String("id", os.Getenv("K8S_POD_IP"), "this instance's unique id within the group") // see deployment_template.yaml
 	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
-	logTable     = flag.String("logtable", "testdstore_log", "the table for our log data")
+	logTable     = flag.String("logtable", "testhedge_log", "the table for our log data")
 )
 
 func onMessage(app interface{}, data []byte) error {
-	s := app.(*dstore.Store)
+	s := app.(*hedge.Store)
 	ctx := context.Background()
 
 	log.Println("recv:", string(data))
@@ -37,7 +37,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		err := s.Put(ctx, dstore.KeyValue{
+		err := s.Put(ctx, hedge.KeyValue{
 			Key:   ss[1],
 			Value: ss[2],
 		})
@@ -68,7 +68,7 @@ func main() {
 		return
 	}
 
-	s := dstore.New(dstore.Config{
+	s := hedge.New(hedge.Config{
 		HostPort:        *id + ":8080",
 		SpannerClient:   client,
 		SpindleTable:    *spindleTable,
@@ -82,12 +82,12 @@ func main() {
 	go s.Run(ctx, done)
 
 	project := strings.Split(client.DatabaseName(), "/")[1]
-	t, err := lspubsub.GetTopic(project, "dstore-demo-pubctrl")
+	t, err := lspubsub.GetTopic(project, "hedge-demo-pubctrl")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	subname := "dstore-demo-subctrl"
+	subname := "hedge-demo-subctrl"
 	_, err = lspubsub.GetSubscription(project, subname, t)
 	if err != nil {
 		log.Fatal(err)

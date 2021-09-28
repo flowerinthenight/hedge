@@ -1,4 +1,4 @@
-package dstore
+package hedge
 
 import (
 	"bufio"
@@ -26,8 +26,8 @@ const (
 )
 
 var (
-	ErrNotRunning = fmt.Errorf("dstore: not running")
-	ErrNoLeader   = fmt.Errorf("dstore: no leader available")
+	ErrNotRunning = fmt.Errorf("hedge: not running")
+	ErrNoLeader   = fmt.Errorf("hedge: no leader available")
 )
 
 // KeyValue is for Put()/Get() callers.
@@ -49,7 +49,7 @@ type LogItem struct {
 // Store is our main distributed, append-only log storage object.
 type Store struct {
 	hostPort      string          // this instance's id; address:port
-	spannerClient *spanner.Client // both for spindle and dstore
+	spannerClient *spanner.Client // both for spindle and hedge
 	lockTable     string          // spindle lock table
 	lockName      string          // spindle lock name
 	lockTimeout   int64           // spindle's lock lease duration in ms
@@ -82,7 +82,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 
 	// Some housekeeping.
 	if s.spannerClient == nil {
-		err = fmt.Errorf("dstore: Spanner client cannot be nil")
+		err = fmt.Errorf("hedge: Spanner client cannot be nil")
 		return err
 	}
 
@@ -95,7 +95,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		{"LogTable", s.logTable},
 	} {
 		if v.val == "" {
-			err = fmt.Errorf("dstore: %v cannot be empty", v.name)
+			err = fmt.Errorf("hedge: %v cannot be empty", v.name)
 			return err
 		}
 	}
@@ -178,7 +178,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	s.Lock = spindle.New(
 		s.spannerClient,
 		s.lockTable,
-		fmt.Sprintf("dstore/spindle/lockname/%v", s.lockName),
+		fmt.Sprintf("hedge/spindle/lockname/%v", s.lockName),
 		spindle.WithDuration(s.lockTimeout),
 		spindle.WithId(s.hostPort),
 	)
@@ -454,7 +454,7 @@ func New(cfg Config) *Store {
 	}
 
 	if s.logger == nil {
-		prefix := fmt.Sprintf("[dstore/%v] ", s.hostPort)
+		prefix := fmt.Sprintf("[hedge/%v] ", s.hostPort)
 		s.logger = log.New(os.Stdout, prefix, log.LstdFlags)
 	}
 
