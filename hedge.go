@@ -23,7 +23,7 @@ const (
 	CmdLeader     = "LDR" // for leader confirmation, reply="ACK"
 	CmdWrite      = "PUT" // write key/value, fmt="PUT base64(payload)"
 	CmdAck        = "ACK" // leader reply, fmt="ACK"|"ACK base64(err)"
-	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name}"
+	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name} {limit}"
 	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}"
 	CmdSemRelease = "SER" // release semaphore, fmt="SER {name} {caller}"
 )
