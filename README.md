@@ -7,7 +7,7 @@ A slightly opinionated distributed key/value storage and locker library built on
 In a nutshell, I wanted something much simpler than using [Raft](https://raft.github.io/) (my [progress](https://github.com/flowerinthenight/testqrm) on that front is quite slow), or worse, Paxos. And I wanted an easily-accessible storage that is a bit decoupled from the code (easier to edit, debug, backup, etc). We are already a heavy Spanner user, and `spindle` has been in our production for quite a while now: these two should be able to do it, preferably on a k8s Deployment; StatefulSets or DaemonSets shouldn't be a requirement.
 
 ## How does it work?
-Leader election is handled by `spindle`. Two APIs are provided for storage: `Put()` and `Get()`. All pods can serve the `Get()` calls, while only the leader handles the `Put()` APIs. If a non-leader pod calls `Get()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only. `spindle`'s `HasLock() function is also available for distributed locking due to struct embedding, although you can use `spindle` separately for that, if you prefer.
+Leader election is handled by `spindle`. Two APIs are provided for storage: `Put()` and `Get()`. All pods can serve the `Get()` calls, while only the leader handles the `Put()` APIs. If a non-leader pod calls `Get()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only. `spindle`'s `HasLock()` function is also available for distributed locking due to struct embedding, although you can use `spindle` separately for that, if you prefer.
 
 ## Prerequisites
 * All pods within the group should be able to contact each other via TCP (address:port).
