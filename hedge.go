@@ -46,8 +46,8 @@ type LogItem struct {
 	Timestamp time.Time
 }
 
-// Store is our main distributed, append-only log storage object.
-type Store struct {
+// Op is our instance for our locker and storage operations.
+type Op struct {
 	hostPort      string          // this instance's id; address:port
 	spannerClient *spanner.Client // both for spindle and hedge
 	lockTable     string          // spindle lock table
@@ -61,18 +61,18 @@ type Store struct {
 }
 
 // String implements the Stringer interface.
-func (s *Store) String() string {
+func (o *Op) String() string {
 	return fmt.Sprintf("hostport:%s spindle:%v;%v;%v",
-		s.hostPort,
-		s.spannerClient.DatabaseName(),
-		s.lockTable,
-		s.logTable,
+		o.hostPort,
+		o.spannerClient.DatabaseName(),
+		o.lockTable,
+		o.logTable,
 	)
 }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
 // optionally sending an error message to 'done' when finished.
-func (s *Store) Run(ctx context.Context, done ...chan error) error {
+func (o *Op) Run(ctx context.Context, done ...chan error) error {
 	var err error
 	defer func(e *error) {
 		if len(done) > 0 {
@@ -81,7 +81,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}(&err)
 
 	// Some housekeeping.
-	if s.spannerClient == nil {
+	if o.spannerClient == nil {
 		err = fmt.Errorf("hedge: Spanner client cannot be nil")
 		return err
 	}
@@ -90,9 +90,9 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		name string
 		val  string
 	}{
-		{"SpindleTable", s.lockTable},
-		{"SpindleLockName", s.lockName},
-		{"LogTable", s.logTable},
+		{"SpindleTable", o.lockTable},
+		{"SpindleLockName", o.lockName},
+		{"LogTable", o.logTable},
 	} {
 		if v.val == "" {
 			err = fmt.Errorf("hedge: %v cannot be empty", v.name)
@@ -101,54 +101,54 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 	}
 
 	// Setup our server for leader communication.
-	addr, err := net.ResolveTCPAddr("tcp4", s.hostPort)
+	addr, err := net.ResolveTCPAddr("tcp4", o.hostPort)
 	if err != nil {
-		s.logger.Printf("ResolveTCPAddr failed: %v", err)
+		o.logger.Printf("ResolveTCPAddr failed: %v", err)
 		return err
 	}
 
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		s.logger.Printf("ListenTCP failed: %v", err)
+		o.logger.Printf("ListenTCP failed: %v", err)
 		return err
 	}
 
 	defer listener.Close()
-	s.logger.Printf("tcp: listen on %v", s.hostPort)
+	o.logger.Printf("tcp: listen on %v", o.hostPort)
 
 	handleConn := func(conn net.Conn) {
 		defer conn.Close()
 		for {
-			msg, err := s.recv(conn)
+			msg, err := o.recv(conn)
 			if err != nil {
-				s.logger.Printf("recv failed: %v", err)
+				o.logger.Printf("recv failed: %v", err)
 				return
 			}
 
 			switch {
 			case strings.HasPrefix(msg, CmdLeader): // confirm leader only
-				reply := s.buildAckReply(nil)
-				if hl, _ := s.HasLock(); !hl {
+				reply := o.buildAckReply(nil)
+				if hl, _ := o.HasLock(); !hl {
 					reply = "\n"
 				}
 
 				conn.Write([]byte(reply))
 				return // always end confirm
 			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
-				reply := s.buildAckReply(nil)
-				if hl, _ := s.HasLock(); hl {
+				reply := o.buildAckReply(nil)
+				if hl, _ := o.HasLock(); hl {
 					payload := strings.Split(msg, " ")[1]
 					decoded, err := base64.StdEncoding.DecodeString(payload)
 					if err != nil {
-						reply = s.buildAckReply(err)
+						reply = o.buildAckReply(err)
 					} else {
 						var kv KeyValue
 						err = json.Unmarshal(decoded, &kv)
 						if err != nil {
-							reply = s.buildAckReply(err)
+							reply = o.buildAckReply(err)
 						} else {
-							err = s.Put(ctx, kv, true)
-							reply = s.buildAckReply(err)
+							err = o.Put(ctx, kv, true)
+							reply = o.buildAckReply(err)
 						}
 					}
 				} else {
@@ -167,7 +167,7 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				s.logger.Printf("listener.Accept failed: %v", err)
+				o.logger.Printf("listener.Accept failed: %v", err)
 				return
 			}
 
@@ -175,42 +175,42 @@ func (s *Store) Run(ctx context.Context, done ...chan error) error {
 		}
 	}()
 
-	s.Lock = spindle.New(
-		s.spannerClient,
-		s.lockTable,
-		fmt.Sprintf("hedge/spindle/lockname/%v", s.lockName),
-		spindle.WithDuration(s.lockTimeout),
-		spindle.WithId(s.hostPort),
+	o.Lock = spindle.New(
+		o.spannerClient,
+		o.lockTable,
+		fmt.Sprintf("hedge/spindle/lockname/%v", o.lockName),
+		spindle.WithDuration(o.lockTimeout),
+		spindle.WithId(o.hostPort),
 	)
 
 	spindledone := make(chan error, 1)
 	spindlectx, cancel := context.WithCancel(context.Background())
-	s.Lock.Run(spindlectx, spindledone)
+	o.Lock.Run(spindlectx, spindledone)
 	defer func() {
 		cancel()      // stop spindle;
 		<-spindledone // and wait
 	}()
 
-	atomic.StoreInt32(&s.active, 1)
-	defer atomic.StoreInt32(&s.active, 0)
+	atomic.StoreInt32(&o.active, 1)
+	defer atomic.StoreInt32(&o.active, 0)
 
 	<-ctx.Done() // wait for termination
 	return nil
 }
 
-// Get reads a key (or keys) from Store.
+// Get reads a key (or keys) from Op.
 // limit = 0 --> (default) latest only
 // limit = -1 --> all (latest to oldest, [0]=latest)
 // limit = -2 --> oldest version only
 // limit > 0 --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
-func (s *Store) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
+func (o *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
 	defer func(begin time.Time) {
-		s.logger.Printf("[Get] duration=%v", time.Since(begin))
+		o.logger.Printf("[Get] duration=%v", time.Since(begin))
 	}(time.Now())
 
 	ret := []KeyValue{}
 	query := `select key, value, timestamp
-from ` + s.logTable + `
+from ` + o.logTable + `
 where key = @key and timestamp is not null
 order by timestamp desc limit 1`
 
@@ -218,24 +218,24 @@ order by timestamp desc limit 1`
 		switch {
 		case limit[0] > 0:
 			query = `"select key, value, timestamp
-from ` + s.logTable + `
+from ` + o.logTable + `
 where key = @key and timestamp is not null
 order by timestamp desc limit ` + fmt.Sprintf("%v", limit[0])
 		case limit[0] == -1:
 			query = `"select key, value, timestamp
-from ` + s.logTable + `
+from ` + o.logTable + `
 where key = @key and timestamp is not null
 order by timestamp desc`
 		case limit[0] == -2:
 			query = `"select key, value, timestamp
-from ` + s.logTable + `
+from ` + o.logTable + `
 where key = @key and timestamp is not null
 order by timestamp limit 1`
 		}
 	}
 
 	stmt := spanner.Statement{SQL: query, Params: map[string]interface{}{"key": key}}
-	iter := s.spannerClient.Single().Query(ctx, stmt)
+	iter := o.spannerClient.Single().Query(ctx, stmt)
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -263,15 +263,15 @@ order by timestamp limit 1`
 	return ret, nil
 }
 
-// Put saves a key/value to Store. This call will try to block, at least roughly until spindle's
+// Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
 // timeout, to wait for the leader's availability to do actual writes before returning.
-func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
-	if atomic.LoadInt32(&s.active) != 1 {
+func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
+	if atomic.LoadInt32(&o.active) != 1 {
 		return ErrNotRunning
 	}
 
 	defer func(begin time.Time) {
-		s.logger.Printf("[Put] duration=%v", time.Since(begin))
+		o.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
 
 	var err error
@@ -279,16 +279,16 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	if len(direct) > 0 {
 		tmpdirect = direct[0]
 	} else {
-		hl, _ = s.HasLock()
+		hl, _ = o.HasLock()
 	}
 
 	if tmpdirect || hl {
 		b, _ := json.Marshal(kv)
-		s.logger.Printf("leader: direct write: %v", string(b))
-		_, err := s.spannerClient.Apply(ctx, []*spanner.Mutation{
-			spanner.InsertOrUpdate(s.logTable,
+		o.logger.Printf("leader: direct write: %v", string(b))
+		_, err := o.spannerClient.Apply(ctx, []*spanner.Mutation{
+			spanner.InsertOrUpdate(o.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
-				[]interface{}{uuid.NewString(), kv.Key, kv.Value, s.hostPort, spanner.CommitTimestamp},
+				[]interface{}{uuid.NewString(), kv.Key, kv.Value, o.hostPort, spanner.CommitTimestamp},
 			),
 		})
 
@@ -302,7 +302,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	var confirmed bool
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	tcnt, tlimit := int64(0), (s.lockTimeout/2000)*2
+	tcnt, tlimit := int64(0), (o.lockTimeout/2000)*2
 	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
@@ -316,7 +316,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 		err = func() error {
 			timeout := time.Second * 5
-			leader, err := s.Leader()
+			leader, err := o.Leader()
 			if err != nil {
 				return err
 			}
@@ -325,21 +325,21 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 				return ErrNoLeader
 			}
 
-			s.logger.Printf("current leader is %v, confirm", leader)
+			o.logger.Printf("current leader is %v, confirm", leader)
 			lconn, err := net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				s.logger.Printf("DialTimeout failed: %v", err)
+				o.logger.Printf("DialTimeout failed: %v", err)
 				return err
 			}
 
 			defer lconn.Close()
-			reply, err := s.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
+			reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
 			if err != nil {
-				s.logger.Printf("send failed: %v", err)
+				o.logger.Printf("send failed: %v", err)
 				return err
 			}
 
-			s.logger.Printf("reply[1/2]: %v", reply)
+			o.logger.Printf("reply[1/2]: %v", reply)
 			if !strings.HasPrefix(reply, CmdAck) {
 				return ErrNoLeader
 			}
@@ -347,7 +347,7 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			// Create a new connection to the confirmed leader.
 			conn, err = net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				s.logger.Printf("DialTimeout failed: %v", err)
+				o.logger.Printf("DialTimeout failed: %v", err)
 				return err
 			}
 
@@ -371,13 +371,13 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	b, _ := json.Marshal(kv)
 	enc := base64.StdEncoding.EncodeToString(b)
-	reply, err := s.send(conn, fmt.Sprintf("%v %v\n", CmdWrite, enc))
+	reply, err := o.send(conn, fmt.Sprintf("%v %v\n", CmdWrite, enc))
 	if err != nil {
-		s.logger.Printf("send failed: %v", err)
+		o.logger.Printf("send failed: %v", err)
 		return err
 	}
 
-	s.logger.Printf("reply[2/2]: %v", reply)
+	o.logger.Printf("reply[2/2]: %v", reply)
 
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
@@ -393,20 +393,20 @@ func (s *Store) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	return nil
 }
 
-func (s *Store) send(conn net.Conn, msg string) (string, error) {
+func (o *Op) send(conn net.Conn, msg string) (string, error) {
 	_, err := conn.Write([]byte(msg))
 	if err != nil {
-		s.logger.Printf("Write failed: %v", err)
+		o.logger.Printf("Write failed: %v", err)
 		return "", err
 	}
 
-	return s.recv(conn)
+	return o.recv(conn)
 }
 
-func (s *Store) recv(conn net.Conn) (string, error) {
+func (o *Op) recv(conn net.Conn) (string, error) {
 	buffer, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		s.logger.Printf("ReadString failed: %v", err)
+		o.logger.Printf("ReadString failed: %v", err)
 		return "", err
 	}
 
@@ -414,7 +414,7 @@ func (s *Store) recv(conn net.Conn) (string, error) {
 	return reply, nil
 }
 
-func (s *Store) buildAckReply(err error) string {
+func (o *Op) buildAckReply(err error) string {
 	if err != nil {
 		ee := base64.StdEncoding.EncodeToString([]byte(err.Error()))
 		return fmt.Sprintf("%v %v\n", CmdAck, ee)
@@ -434,9 +434,9 @@ type Config struct {
 	Logger          *log.Logger     // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
 }
 
-// New creates an instance of Store.
-func New(cfg Config) *Store {
-	s := &Store{
+// New creates an instance of Op.
+func New(cfg Config) *Op {
+	o := &Op{
 		hostPort:      cfg.HostPort,
 		spannerClient: cfg.SpannerClient,
 		lockTable:     cfg.SpindleTable,
@@ -447,16 +447,16 @@ func New(cfg Config) *Store {
 	}
 
 	switch {
-	case s.lockTimeout == 0:
-		s.lockTimeout = 30000 // default
-	case s.lockTimeout < 2000:
-		s.lockTimeout = 2000 // minimum
+	case o.lockTimeout == 0:
+		o.lockTimeout = 30000 // default
+	case o.lockTimeout < 2000:
+		o.lockTimeout = 2000 // minimum
 	}
 
-	if s.logger == nil {
-		prefix := fmt.Sprintf("[hedge/%v] ", s.hostPort)
-		s.logger = log.New(os.Stdout, prefix, log.LstdFlags)
+	if o.logger == nil {
+		prefix := fmt.Sprintf("[hedge/%v] ", o.hostPort)
+		o.logger = log.New(os.Stdout, prefix, log.LstdFlags)
 	}
 
-	return s
+	return o
 }

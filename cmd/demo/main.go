@@ -24,7 +24,7 @@ var (
 )
 
 func onMessage(app interface{}, data []byte) error {
-	s := app.(*hedge.Store)
+	o := app.(*hedge.Op)
 	ctx := context.Background()
 
 	log.Println("recv:", string(data))
@@ -37,7 +37,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		err := s.Put(ctx, hedge.KeyValue{
+		err := o.Put(ctx, hedge.KeyValue{
 			Key:   ss[1],
 			Value: ss[2],
 		})
@@ -47,7 +47,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 	case "get": // "get <key>"
-		v, err := s.Get(ctx, ss[1])
+		v, err := o.Get(ctx, ss[1])
 		if err != nil {
 			log.Println(err)
 			break

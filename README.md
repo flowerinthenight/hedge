@@ -32,7 +32,7 @@ Something like:
 client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
 defer client.Close()
 
-s := hedge.New(hedge.Config{
+op := hedge.New(hedge.Config{
 	HostPort:        "1.2.3.4:8080",
 	SpannerClient:   client,
 	SpindleTable:    "locktable",
@@ -42,9 +42,9 @@ s := hedge.New(hedge.Config{
 
 ctx, cancel := context.WithCancel(context.Background())
 done := make(chan error, 1) // optional wait
-go s.Run(ctx, done)
+go op.Run(ctx, done)
 
-// Any pod should be able to call s.Put(...) or s.Get(...) here.
+// Any pod should be able to call op.Put(...) or op.Get(...) here.
 
 cancel()
 <-done
