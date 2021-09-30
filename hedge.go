@@ -65,7 +65,7 @@ type Op struct {
 
 // String implements the Stringer interface.
 func (o *Op) String() string {
-	return fmt.Sprintf("hostport:%s spindle:%v;%v;%v",
+	return fmt.Sprintf("hostport:%s;spindle:%v;%v;%v",
 		o.hostPort,
 		o.spannerClient.DatabaseName(),
 		o.lockTable,
@@ -460,9 +460,9 @@ func New(cfg Config) *Op {
 
 	switch {
 	case o.lockTimeout == 0:
-		o.lockTimeout = 30000 // default
+		o.lockTimeout = 30000 // default 30s
 	case o.lockTimeout < 2000:
-		o.lockTimeout = 2000 // minimum
+		o.lockTimeout = 2000 // minimum 2s
 	}
 
 	if o.logger == nil {

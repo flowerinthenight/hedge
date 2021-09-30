@@ -107,8 +107,8 @@ github.com/envoyproxy/go-control-plane v0.9.10-0.20210907150352-cf90f659a021/go.
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/flowerinthenight/longsub v1.2.2 h1:QnavdqtnWgiPQAdXI67cWNHRLnOpqpLxqtqPIMAbH7k=
 github.com/flowerinthenight/longsub v1.2.2/go.mod h1:lYK6a3fCZEnYP8rp8mZM/K8K5lPrDeuc62Ctzx7EQdE=
-github.com/flowerinthenight/spindle v1.0.9 h1:Cq4C04BkM9Zg2CSmySvUwsmyLJjSjepqeUjLQ6Ab6jQ=
-github.com/flowerinthenight/spindle v1.0.9/go.mod h1:oLJyn5ghrVZW20wOVmLZT32MrAJvZmjisxFujRMeWjs=
+github.com/flowerinthenight/spindle v1.0.13 h1:WetCOaoRlp/hTWCxXqaqoP2SCgJIN31uSiw9hgmJUQo=
+github.com/flowerinthenight/spindle v1.0.13/go.mod h1:oLJyn5ghrVZW20wOVmLZT32MrAJvZmjisxFujRMeWjs=
 github.com/fortytw2/leaktest v1.3.0/go.mod h1:jDsjWgpAGjm2CA7WthBh/CdZYEPF31XHquHwclZch5g=
 github.com/frankban/quicktest v1.7.2/go.mod h1:jaStnuzAqU1AJdCO0l53JDCJrVDKcS03DbaAcR7Ks/o=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
