@@ -5,7 +5,7 @@ go 1.17
 require (
 	cloud.google.com/go/spanner v1.25.0
 	github.com/flowerinthenight/longsub v1.2.2
-	github.com/flowerinthenight/spindle v1.0.13
+	github.com/flowerinthenight/spindle v1.0.16
 	github.com/google/uuid v1.3.0
 	google.golang.org/api v0.58.0
 )
