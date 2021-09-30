@@ -46,7 +46,9 @@ ctx, cancel := context.WithCancel(context.Background())
 done := make(chan error, 1) // optional wait
 go op.Run(ctx, done)
 
-// Any pod should be able to call op.Put(...) or op.Get(...) here.
+
+// For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
+// For distributed locking, any pod can call op.HasLock() here.
 
 cancel()
 <-done
