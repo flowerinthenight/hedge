@@ -39,7 +39,7 @@ spec:
           curl -s -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' --retry 30 --retry-connrefused --retry-max-time 30 > /dev/null || exit 1
       containers:
       - name: hedgedemo
-        image: quay.io/flowerinthenight/hedgedemo:v1.1.0
+        image: quay.io/flowerinthenight/hedgedemo:v1.1.1
         imagePullPolicy: Always
         # TODO: Update as needed.
         args: ["-db=projects/{project}/instances/{instance}/databases/{database}"]
