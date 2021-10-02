@@ -68,14 +68,7 @@ func main() {
 		return
 	}
 
-	s := hedge.New(hedge.Config{
-		HostPort:        *id + ":8080",
-		SpannerClient:   client,
-		SpindleTable:    *spindleTable,
-		SpindleLockName: *lockName,
-		LogTable:        *logTable,
-	})
-
+	s := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable)
 	log.Println(s)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

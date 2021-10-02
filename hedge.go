@@ -49,6 +49,26 @@ type LogItem struct {
 	Timestamp time.Time
 }
 
+type Option interface {
+	Apply(*Op)
+}
+
+type withDuration int64
+
+func (w withDuration) Apply(o *Op) { o.lockTimeout = int64(w) }
+
+// WithDuration sets Op's internal spindle object's lease duration.
+// Defaults to 30s when not set. Minimum value is 2s.
+func WithDuration(v int64) Option { return withDuration(v) }
+
+type withLogger struct{ l *log.Logger }
+
+func (w withLogger) Apply(o *Op) { o.logger = w.l }
+
+// WithLogger sets Op's logger object. Can be silenced by setting
+// v to `log.New(ioutil.Discard, "", 0)`.
+func WithLogger(v *log.Logger) Option { return withLogger{v} }
+
 // Op is our instance for our locker and storage operations.
 type Op struct {
 	hostPort      string          // this instance's id; address:port
@@ -60,7 +80,7 @@ type Op struct {
 
 	*spindle.Lock             // handles our distributed lock
 	active        int32       // 1=running, 0=off
-	logger        *log.Logger // can be silenced by `log.New(ioutil.Discard, "", 0)`
+	logger        *log.Logger // internal logger
 }
 
 // String implements the Stringer interface.
@@ -435,40 +455,33 @@ func (o *Op) buildAckReply(err error) string {
 	}
 }
 
-// Config is our configuration to New().
-type Config struct {
-	HostPort        string          // required: serves as the instance's unique id, should be ip:port
-	SpannerClient   *spanner.Client // required: Spanner client connection
-	SpindleTable    string          // required: table name for *spindle.Lock
-	SpindleLockName string          // required: spindle's lock name; should be the same for the group
-	SpindleTimeout  int64           // optional: spindle's lease duration in ms, default to 30s, min=2s
-	LogTable        string          // required: table name for the append-only storage
-	Logger          *log.Logger     // optional: can be silenced by `log.New(ioutil.Discard, "", 0)`
-}
+// New creates an instance of Op. 'hostPort' should be in ip:port format. The internal spindle object
+// lock table will be 'lockTable'; lock name will be 'lockName'. And 'logTable' will serve as our
+// append-only, distributed key/value storage table.
+func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string, opts ...Option) *Op {
+	op := &Op{
+		hostPort:      hostPort,
+		spannerClient: client,
+		lockTable:     lockTable,
+		lockName:      lockName,
+		logTable:      logTable,
+	}
 
-// New creates an instance of Op.
-func New(cfg Config) *Op {
-	o := &Op{
-		hostPort:      cfg.HostPort,
-		spannerClient: cfg.SpannerClient,
-		lockTable:     cfg.SpindleTable,
-		lockName:      cfg.SpindleLockName,
-		lockTimeout:   cfg.SpindleTimeout,
-		logTable:      cfg.LogTable,
-		logger:        cfg.Logger,
+	for _, opt := range opts {
+		opt.Apply(op)
 	}
 
 	switch {
-	case o.lockTimeout == 0:
-		o.lockTimeout = 30000 // default 30s
-	case o.lockTimeout < 2000:
-		o.lockTimeout = 2000 // minimum 2s
+	case op.lockTimeout == 0:
+		op.lockTimeout = 30000 // default 30s
+	case op.lockTimeout < 2000:
+		op.lockTimeout = 2000 // minimum 2s
 	}
 
-	if o.logger == nil {
-		prefix := fmt.Sprintf("[hedge/%v] ", o.hostPort)
-		o.logger = log.New(os.Stdout, prefix, log.LstdFlags)
+	if op.logger == nil {
+		prefix := fmt.Sprintf("[hedge/%v] ", op.hostPort)
+		op.logger = log.New(os.Stdout, prefix, log.LstdFlags)
 	}
 
-	return o
+	return op
 }
