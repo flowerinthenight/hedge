@@ -101,7 +101,7 @@ func (w withLogger) Apply(o *Op) { o.logger = w.l }
 // v to `log.New(ioutil.Discard, "", 0)`.
 func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
-// Op is our instance for our locker and storage operations.
+// Op is our main instance for hedge operations.
 type Op struct {
 	hostPort      string          // this instance's id; address:port
 	spannerClient *spanner.Client // both for spindle and hedge
