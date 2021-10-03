@@ -11,7 +11,9 @@ Leader election is handled by `spindle`. Two APIs are provided for storage: `Put
 
 `spindle`'s `HasLock()` function is also available for distributed locking due to struct embedding, although you can use `spindle` separately for that, if you prefer.
 
-A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader.
+A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader at any time.
+
+Finally, a distributed semaphore is currently in the works and will be available shortly.
 
 ## Prerequisites
 * All pods within the group should be able to contact each other via TCP (address:port).
