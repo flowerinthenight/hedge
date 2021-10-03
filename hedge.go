@@ -191,30 +191,26 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 
 				conn.Write([]byte(reply))
-				return // always end confirm
+				return // always end LDR
 			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
 				reply := o.buildAckReply(nil)
 				if hl, _ := o.HasLock(); hl {
 					payload := strings.Split(msg, " ")[1]
-					decoded, err := base64.StdEncoding.DecodeString(payload)
+					decoded, _ := base64.StdEncoding.DecodeString(payload)
+					var kv KeyValue
+					err = json.Unmarshal(decoded, &kv)
 					if err != nil {
 						reply = o.buildAckReply(err)
 					} else {
-						var kv KeyValue
-						err = json.Unmarshal(decoded, &kv)
-						if err != nil {
-							reply = o.buildAckReply(err)
-						} else {
-							err = o.Put(ctx, kv, true)
-							reply = o.buildAckReply(err)
-						}
+						err = o.Put(ctx, kv, true)
+						reply = o.buildAckReply(err)
 					}
 				} else {
 					reply = "\n" // not leader, possible even if previously confirmed
 				}
 
 				conn.Write([]byte(reply))
-				return // always end write
+				return // always end PUT
 			case strings.HasPrefix(msg, CmdSend+" "): // Send(...) API
 				reply := base64.StdEncoding.EncodeToString([]byte(ErrNoLeader.Error())) + "\n"
 				if hl, _ := o.HasLock(); hl {
@@ -240,7 +236,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				conn.Write([]byte(reply))
 				return // always end SND
 			default:
-				return
+				return // close conn
 			}
 		}
 	}
