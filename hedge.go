@@ -402,43 +402,13 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		}
 
 		err = func() error {
-			timeout := time.Second * 5
-			leader, err := o.Leader()
+			lconn, err := o.getConn()
 			if err != nil {
-				return err
-			}
-
-			if leader == "" {
-				return ErrNoLeader
-			}
-
-			o.logger.Printf("[Put] current leader is %v, confirm", leader)
-			lconn, err := net.DialTimeout("tcp", leader, timeout)
-			if err != nil {
-				o.logger.Printf("[Put] DialTimeout failed: %v", err)
-				return err
-			}
-
-			defer lconn.Close()
-			reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
-			if err != nil {
-				o.logger.Printf("[Put] send failed: %v", err)
-				return err
-			}
-
-			o.logger.Printf("[Put] reply[1/2]: %v", reply)
-			if !strings.HasPrefix(reply, CmdAck) {
-				return ErrNoLeader
-			}
-
-			// Create a new connection to the confirmed leader.
-			conn, err = net.DialTimeout("tcp", leader, timeout)
-			if err != nil {
-				o.logger.Printf("[Put] DialTimeout failed: %v", err)
 				return err
 			}
 
 			confirmed = true
+			conn = lconn
 			return nil
 		}()
 
@@ -507,43 +477,13 @@ func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 		}
 
 		err = func() error {
-			timeout := time.Second * 5
-			leader, err := o.Leader()
+			lconn, err := o.getConn()
 			if err != nil {
-				return err
-			}
-
-			if leader == "" {
-				return ErrNoLeader
-			}
-
-			o.logger.Printf("[Send] current leader is %v, confirm", leader)
-			lconn, err := net.DialTimeout("tcp", leader, timeout)
-			if err != nil {
-				o.logger.Printf("[Send] DialTimeout failed: %v", err)
-				return err
-			}
-
-			defer lconn.Close()
-			reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
-			if err != nil {
-				o.logger.Printf("[Send] send failed: %v", err)
-				return err
-			}
-
-			o.logger.Printf("[Send] reply[1/2]: %v", reply)
-			if !strings.HasPrefix(reply, CmdAck) {
-				return ErrNoLeader
-			}
-
-			// Create a new connection to the confirmed leader.
-			conn, err = net.DialTimeout("tcp", leader, timeout)
-			if err != nil {
-				o.logger.Printf("[Send] DialTimeout failed: %v", err)
 				return err
 			}
 
 			confirmed = true
+			conn = lconn
 			return nil
 		}()
 
@@ -610,6 +550,40 @@ func (o *Op) buildAckReply(err error) string {
 	} else {
 		return fmt.Sprintf("%v\n", CmdAck)
 	}
+}
+
+func (o *Op) getConn() (net.Conn, error) {
+	timeout := time.Second * 5
+	leader, err := o.Leader()
+	if err != nil {
+		return nil, err
+	}
+
+	if leader == "" {
+		return nil, ErrNoLeader
+	}
+
+	o.logger.Printf("current leader is %v, confirm", leader)
+	lconn, err := net.DialTimeout("tcp", leader, timeout)
+	if err != nil {
+		o.logger.Printf("DialTimeout failed: %v", err)
+		return nil, err
+	}
+
+	defer lconn.Close()
+	reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
+	if err != nil {
+		o.logger.Printf("send failed: %v", err)
+		return nil, err
+	}
+
+	o.logger.Printf("reply[1/2]: %v", reply)
+	if !strings.HasPrefix(reply, CmdAck) {
+		return nil, ErrNoLeader
+	}
+
+	// Create a new connection to the confirmed leader.
+	return net.DialTimeout("tcp", leader, timeout)
 }
 
 // New creates an instance of Op. 'hostPort' should be in ip:port format. The internal spindle object
