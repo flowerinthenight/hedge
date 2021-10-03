@@ -40,19 +40,19 @@ defer client.Close()
 
 xdata := "some arbitrary data"
 op := hedge.New(
-	client,
-	"1.2.3.4:8080",
-	"locktable",
-	"myspindlelock",
-	"logtable",
-	hedge.WithLeaderHandler(
-		xdata,
-		func(data interface{}, msg []byte) ([]byte, error) {
-			log.Println("xdata:", data.(string))
-			log.Println("received:", string(msg))
-			return []byte("hello " + string(msg)), nil
-		},
-	),
+    client,
+    "1.2.3.4:8080",
+    "locktable",
+    "myspindlelock",
+    "logtable",
+    hedge.WithLeaderHandler(
+        xdata,
+        func(data interface{}, msg []byte) ([]byte, error) {
+            log.Println("xdata:", data.(string))
+            log.Println("received:", string(msg))
+            return []byte("hello " + string(msg)), nil
+        },
+    ),
 })
 
 ctx, cancel := context.WithCancel(context.Background())
