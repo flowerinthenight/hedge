@@ -22,6 +22,7 @@ import (
 const (
 	CmdLeader     = "LDR" // for leader confirmation, reply="ACK"
 	CmdWrite      = "PUT" // write key/value, fmt="PUT base64(payload)"
+	CmdSend       = "SND" // member to leader, fmt="SND base64(payload)"
 	CmdAck        = "ACK" // leader reply, fmt="ACK"|"ACK base64(err)"
 	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name} {limit}"
 	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}"
@@ -31,7 +32,23 @@ const (
 var (
 	ErrNotRunning = fmt.Errorf("hedge: not running")
 	ErrNoLeader   = fmt.Errorf("hedge: no leader available")
+	ErrNoHandler  = fmt.Errorf("hedge: no message handler")
 )
+
+// FnLeaderHandler represents a leader node's message handler for messages
+// sent from members. 'data' is any arbitrary data you provide using the
+// 'WithLeaderHandler' option. 'msg' is the message sent from the calling
+// member. The returning []byte will serve as the handler's reply. When
+// it's nil, it means an empty reply.
+//
+// Typical use case would be:
+// 1) Any node (including the leader) calls the Send(...) API.
+// 2) The current leader handles the call by reading the input.
+// 3) Leader will then call FnLeaderHandler, passing the arbitrary data
+//    along with the message.
+// 4) FnLeaderHandler will process the data as leader, then returns the
+//    reply to the calling member.
+type FnLeaderHandler func(data interface{}, msg []byte) ([]byte, error)
 
 // KeyValue is for Put()/Get() callers.
 type KeyValue struct {
@@ -61,6 +78,22 @@ func (w withDuration) Apply(o *Op) { o.lockTimeout = int64(w) }
 // Defaults to 30s when not set. Minimum value is 2s.
 func WithDuration(v int64) Option { return withDuration(v) }
 
+type withLeaderHandler struct {
+	d interface{}
+	h FnLeaderHandler
+}
+
+func (w withLeaderHandler) Apply(o *Op) {
+	o.fnData = w.d
+	o.fnLeader = w.h
+}
+
+// WithLeaderHandler sets the node's callback function when it is the current leader and when
+// members send messages to it using the Send(...) API. Any arbitrary data represented by 'd'
+// will be passed to the callback 'h' every time it is called. See 'FnLeaderHandler' type
+// definition for more details.
+func WithLeaderHandler(d interface{}, h FnLeaderHandler) Option { return withLeaderHandler{d, h} }
+
 type withLogger struct{ l *log.Logger }
 
 func (w withLogger) Apply(o *Op) { o.logger = w.l }
@@ -77,6 +110,9 @@ type Op struct {
 	lockName      string          // spindle lock name
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
+
+	fnLeader FnLeaderHandler // leader message handler
+	fnData   interface{}     // arbitrary data passed to leader message handler
 
 	*spindle.Lock             // handles our distributed lock
 	active        int32       // 1=running, 0=off
@@ -180,6 +216,30 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 
 				conn.Write([]byte(reply))
 				return // always end write
+			case strings.HasPrefix(msg, CmdSend+" "): // Send(...) API
+				reply := base64.StdEncoding.EncodeToString([]byte(ErrNoLeader.Error())) + "\n"
+				if hl, _ := o.HasLock(); hl {
+					reply = base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error())) + "\n"
+					if o.fnLeader != nil {
+						payload := strings.Split(msg, " ")[1]
+						decoded, _ := base64.StdEncoding.DecodeString(payload)
+						r, e := o.fnLeader(o.fnData, decoded) // call leader handler
+						if e != nil {
+							reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
+						} else {
+							br := base64.StdEncoding.EncodeToString([]byte(""))
+							if r != nil {
+								br = base64.StdEncoding.EncodeToString(r)
+							}
+
+							// The final correct reply format.
+							reply = fmt.Sprintf("%v %v\n", CmdAck, br)
+						}
+					}
+				}
+
+				conn.Write([]byte(reply))
+				return // always end SND
 			default:
 				return
 			}
@@ -316,7 +376,7 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	if tmpdirect || hl {
 		b, _ := json.Marshal(kv)
-		o.logger.Printf("leader: direct write: %v", string(b))
+		o.logger.Printf("[Put] leader: direct write: %v", string(b))
 		_, err := o.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(o.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
@@ -357,21 +417,21 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 				return ErrNoLeader
 			}
 
-			o.logger.Printf("current leader is %v, confirm", leader)
+			o.logger.Printf("[Put] current leader is %v, confirm", leader)
 			lconn, err := net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				o.logger.Printf("DialTimeout failed: %v", err)
+				o.logger.Printf("[Put] DialTimeout failed: %v", err)
 				return err
 			}
 
 			defer lconn.Close()
 			reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
 			if err != nil {
-				o.logger.Printf("send failed: %v", err)
+				o.logger.Printf("[Put] send failed: %v", err)
 				return err
 			}
 
-			o.logger.Printf("reply[1/2]: %v", reply)
+			o.logger.Printf("[Put] reply[1/2]: %v", reply)
 			if !strings.HasPrefix(reply, CmdAck) {
 				return ErrNoLeader
 			}
@@ -379,7 +439,7 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 			// Create a new connection to the confirmed leader.
 			conn, err = net.DialTimeout("tcp", leader, timeout)
 			if err != nil {
-				o.logger.Printf("DialTimeout failed: %v", err)
+				o.logger.Printf("[Put] DialTimeout failed: %v", err)
 				return err
 			}
 
@@ -405,11 +465,11 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	enc := base64.StdEncoding.EncodeToString(b)
 	reply, err := o.send(conn, fmt.Sprintf("%v %v\n", CmdWrite, enc))
 	if err != nil {
-		o.logger.Printf("send failed: %v", err)
+		o.logger.Printf("[Put] send failed: %v", err)
 		return err
 	}
 
-	o.logger.Printf("reply[2/2]: %v", reply)
+	o.logger.Printf("[Put] reply[2/2]: %v", reply)
 
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
@@ -423,6 +483,108 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	}
 
 	return nil
+}
+
+func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
+	if atomic.LoadInt32(&o.active) != 1 {
+		return nil, ErrNotRunning
+	}
+
+	defer func(begin time.Time) {
+		o.logger.Printf("[Send] duration=%v", time.Since(begin))
+	}(time.Now())
+
+	var err error
+	var conn net.Conn
+	var confirmed bool
+	first := make(chan struct{}, 1)
+	first <- struct{}{} // immediately the first time
+	tcnt, tlimit := int64(0), (o.lockTimeout/2000)*2
+	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, context.Canceled
+		case <-first:
+		case <-ticker.C:
+		}
+
+		err = func() error {
+			timeout := time.Second * 5
+			leader, err := o.Leader()
+			if err != nil {
+				return err
+			}
+
+			if leader == "" {
+				return ErrNoLeader
+			}
+
+			o.logger.Printf("[Send] current leader is %v, confirm", leader)
+			lconn, err := net.DialTimeout("tcp", leader, timeout)
+			if err != nil {
+				o.logger.Printf("[Send] DialTimeout failed: %v", err)
+				return err
+			}
+
+			defer lconn.Close()
+			reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
+			if err != nil {
+				o.logger.Printf("[Send] send failed: %v", err)
+				return err
+			}
+
+			o.logger.Printf("[Send] reply[1/2]: %v", reply)
+			if !strings.HasPrefix(reply, CmdAck) {
+				return ErrNoLeader
+			}
+
+			// Create a new connection to the confirmed leader.
+			conn, err = net.DialTimeout("tcp", leader, timeout)
+			if err != nil {
+				o.logger.Printf("[Send] DialTimeout failed: %v", err)
+				return err
+			}
+
+			confirmed = true
+			return nil
+		}()
+
+		tcnt++
+		if err == nil || (tcnt > tlimit) {
+			break
+		}
+	}
+
+	if conn != nil {
+		defer conn.Close()
+	}
+
+	if !confirmed {
+		return nil, ErrNoLeader
+	}
+
+	enc := base64.StdEncoding.EncodeToString(msg)
+	reply, err := o.send(conn, fmt.Sprintf("%v %v\n", CmdSend, enc))
+	if err != nil {
+		o.logger.Printf("[Send] send failed: %v", err)
+		return nil, err
+	}
+
+	o.logger.Printf("[Send] reply[2/2]: %v", reply)
+
+	switch {
+	case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"
+		ss := strings.Split(reply, " ")
+		if len(ss) > 1 {
+			return base64.StdEncoding.DecodeString(ss[1])
+		}
+	}
+
+	// If not ACK, then the whole reply is an error string.
+	return base64.StdEncoding.DecodeString(reply)
 }
 
 func (o *Op) send(conn net.Conn, msg string) (string, error) {

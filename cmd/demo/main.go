@@ -55,6 +55,19 @@ func onMessage(app interface{}, data []byte) error {
 
 		b, _ := json.Marshal(v)
 		log.Printf("%v", string(b))
+	case "send": // send <payload>
+		if len(ss) < 2 {
+			log.Println("invalid msg fmt, should be `send <msg>`")
+			break
+		}
+
+		v, err := o.Send(context.Background(), []byte(ss[1]))
+		if err != nil {
+			log.Println(err)
+			break
+		}
+
+		log.Printf("reply(send): %v", string(v))
 	}
 
 	return nil
@@ -68,7 +81,17 @@ func main() {
 		return
 	}
 
-	s := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable)
+	xdata := "some arbitrary data"
+	s := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
+		hedge.WithLeaderHandler(
+			xdata,
+			func(data interface{}, msg []byte) ([]byte, error) {
+				log.Println("xdata:", data.(string))
+				log.Println("received:", string(msg))
+				return []byte("hello " + string(msg)), nil
+			}),
+	)
+
 	log.Println(s)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
