@@ -78,4 +78,7 @@ $ gcloud pubsub topics publish hedge-demo-pubctrl --message='put hello world'
 # Test the Get() API, key=hello
 # Try running multiple times to see leader and non-leader pods handling the messages.
 $ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
+
+# Test the Send() API
+$ gcloud pubsub topics publish hedge-demo-pubctrl --message='send world'
 ```
