@@ -38,8 +38,7 @@ var (
 // FnLeaderHandler represents a leader node's message handler for messages
 // sent from members. 'data' is any arbitrary data you provide using the
 // 'WithLeaderHandler' option. 'msg' is the message sent from the calling
-// member. The returning []byte will serve as the handler's reply. When
-// it's nil, it means an empty reply.
+// member. The returning []byte will serve as the handler's reply.
 //
 // Typical use case would be:
 // 1) Any node (including the leader) calls the Send(...) API.
