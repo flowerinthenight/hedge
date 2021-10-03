@@ -38,12 +38,21 @@ Something like:
 client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
 defer client.Close()
 
-op := hedge.New(hedge.Config{
-	HostPort:        "1.2.3.4:8080",
-	SpannerClient:   client,
-	SpindleTable:    "locktable",
-	SpindleLockName: "myspindlelock",
-	LogTable:        "logtable",
+xdata := "some arbitrary data"
+op := hedge.New(
+	client,
+	"1.2.3.4:8080",
+	"locktable",
+	"myspindlelock",
+	"logtable",
+	hedge.WithLeaderHandler(
+		xdata,
+		func(data interface{}, msg []byte) ([]byte, error) {
+			log.Println("xdata:", data.(string))
+			log.Println("received:", string(msg))
+			return []byte("hello " + string(msg)), nil
+		},
+	),
 })
 
 ctx, cancel := context.WithCancel(context.Background())
@@ -53,6 +62,7 @@ go op.Run(ctx, done)
 
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
 // For distributed locking, any pod can call op.HasLock() here.
+// Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
 
 cancel()
 <-done
