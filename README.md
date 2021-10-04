@@ -41,7 +41,7 @@ defer client.Close()
 xdata := "some arbitrary data"
 op := hedge.New(
     client,
-    "1.2.3.4:8080",
+    "1.2.3.4:8080", // you can use k8s downward API
     "locktable",
     "myspindlelock",
     "logtable",
