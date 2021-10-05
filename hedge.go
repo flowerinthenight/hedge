@@ -227,7 +227,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 		<-spindleDone // and wait
 	}()
 
-	// Start active members tracking goroutine.
+	// Start tracking online members.
 	o.members[o.hostPort] = struct{}{}
 	mbchkDone := make(chan error, 1)
 	mbchkCtx := context.WithValue(ctx, struct{}{}, nil)
@@ -247,7 +247,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 			var w sync.WaitGroup
 			allm := o.getMembers()
 			todel := make(chan string, len(allm))
-			
+
 			// Make sure each member is online.
 			for k := range allm {
 				w.Add(1)
@@ -355,7 +355,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			if atomic.LoadInt32(&active) == 0 {
-				go ensureMembers()
+				go ensureMembers() // leader only
 			}
 		}
 	}()
