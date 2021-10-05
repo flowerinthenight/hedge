@@ -39,24 +39,7 @@ var (
 	ErrNoHandler  = fmt.Errorf("hedge: no message handler")
 )
 
-// FnLeaderHandler represents a leader node's message handler for messages
-// sent from members. 'data' is any arbitrary data you provide using the
-// 'WithLeaderHandler' option. 'msg' is the message sent from the calling
-// member. The returning []byte will serve as the handler's reply.
-//
-// Typical use case would be:
-// 1) Any node (including the leader) calls the Send(...) API.
-// 2) The current leader handles the call by reading the input.
-// 3) Leader will then call FnLeaderHandler, passing the arbitrary data
-//    along with the message.
-// 4) FnLeaderHandler will process the data as leader, then returns the
-//    reply to the calling member.
-type FnLeaderHandler func(data interface{}, msg []byte) ([]byte, error)
-
-// FnBroadcastHandler represents a node's message handler for broadcast
-// messages from anybody in the group, including the leader. Arguments
-// and return values are basically the same as FnLeaderHandler.
-type FnBroadcastHandler func(data interface{}, msg []byte) ([]byte, error)
+type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
 
 // KeyValue is for Put()/Get() callers.
 type KeyValue struct {
@@ -88,7 +71,7 @@ func WithDuration(v int64) Option { return withDuration(v) }
 
 type withLeaderHandler struct {
 	d interface{}
-	h FnLeaderHandler
+	h FnMsgHandler
 }
 
 func (w withLeaderHandler) Apply(o *Op) {
@@ -99,14 +82,22 @@ func (w withLeaderHandler) Apply(o *Op) {
 // WithLeaderHandler sets the node's callback function when it is the current
 // leader and when members send messages to it using the Send(...) API. Any
 // arbitrary data represented by 'd' will be passed to the callback 'h' every
-// time it is called. See 'FnLeaderHandler' type definition for more details.
-func WithLeaderHandler(d interface{}, h FnLeaderHandler) Option {
+// time it is called. The handler's returning []byte will serve as reply.
+//
+// Typical flow would be:
+// 1) Any node (including the leader) calls the Send(...) API.
+// 2) The current leader handles the call by reading the input.
+// 3) Leader will then call FnLeaderHandler, passing the arbitrary data
+//    along with the message.
+// 4) FnLeaderHandler will process the data as leader, then returns the
+//    reply to the calling member.
+func WithLeaderHandler(d interface{}, h FnMsgHandler) Option {
 	return withLeaderHandler{d, h}
 }
 
 type withBroadcastHandler struct {
 	d interface{}
-	h FnBroadcastHandler
+	h FnMsgHandler
 }
 
 func (w withBroadcastHandler) Apply(o *Op) {
@@ -117,8 +108,8 @@ func (w withBroadcastHandler) Apply(o *Op) {
 // WithBroadcastHandler sets the node's callback function for broadcast messages
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
 // represented by 'd' will be passed to the callback 'h' every time it is called.
-// See 'FnBroadcastHandler' type definition for more details.
-func WithBroadcastHandler(d interface{}, h FnBroadcastHandler) Option {
+// The handler's returning []byte will serve as reply.
+func WithBroadcastHandler(d interface{}, h FnMsgHandler) Option {
 	return withBroadcastHandler{d, h}
 }
 
@@ -139,10 +130,10 @@ type Op struct {
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
 
-	fnLeader    FnLeaderHandler    // leader message handler
-	fnLdrData   interface{}        // arbitrary data passed to fnLeader
-	fnBroadcast FnBroadcastHandler // broadcast message handler
-	fnBcData    interface{}        // arbitrary data passed to fnBroadcast
+	fnLeader    FnMsgHandler // leader message handler
+	fnLdrData   interface{}  // arbitrary data passed to fnLeader
+	fnBroadcast FnMsgHandler // broadcast message handler
+	fnBcData    interface{}  // arbitrary data passed to fnBroadcast
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
