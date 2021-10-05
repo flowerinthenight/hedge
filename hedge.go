@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,7 +24,10 @@ const (
 	CmdLeader     = "LDR" // for leader confirmation, reply="ACK"
 	CmdWrite      = "PUT" // write key/value, fmt="PUT base64(payload)"
 	CmdSend       = "SND" // member to leader, fmt="SND base64(payload)"
-	CmdAck        = "ACK" // leader reply, fmt="ACK"|"ACK base64(err)"
+	CmdPing       = "HEY" // heartbeat to indicate availability, fmt="HEY [id]"
+	CmdMembers    = "MEM" // members info from leader to all, fmt="MEM base64(JSON(members))"
+	CmdBroadcast  = "ALL" // broadcast to all, fmt="ALL base64(payload)"
+	CmdAck        = "ACK" // generic reply, fmt="ACK"|"ACK base64(err)"|"ACK base64(JSON(members))"
 	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name} {limit}"
 	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}"
 	CmdSemRelease = "SER" // release semaphore, fmt="SER {name} {caller}"
@@ -48,6 +52,11 @@ var (
 // 4) FnLeaderHandler will process the data as leader, then returns the
 //    reply to the calling member.
 type FnLeaderHandler func(data interface{}, msg []byte) ([]byte, error)
+
+// FnBroadcastHandler represents a node's message handler for broadcast
+// messages from anybody in the group, including the leader. Arguments
+// and return values are basically the same as FnLeaderHandler.
+type FnBroadcastHandler func(data interface{}, msg []byte) ([]byte, error)
 
 // KeyValue is for Put()/Get() callers.
 type KeyValue struct {
@@ -83,15 +92,35 @@ type withLeaderHandler struct {
 }
 
 func (w withLeaderHandler) Apply(o *Op) {
-	o.fnData = w.d
+	o.fnLdrData = w.d
 	o.fnLeader = w.h
 }
 
-// WithLeaderHandler sets the node's callback function when it is the current leader and when
-// members send messages to it using the Send(...) API. Any arbitrary data represented by 'd'
-// will be passed to the callback 'h' every time it is called. See 'FnLeaderHandler' type
-// definition for more details.
-func WithLeaderHandler(d interface{}, h FnLeaderHandler) Option { return withLeaderHandler{d, h} }
+// WithLeaderHandler sets the node's callback function when it is the current
+// leader and when members send messages to it using the Send(...) API. Any
+// arbitrary data represented by 'd' will be passed to the callback 'h' every
+// time it is called. See 'FnLeaderHandler' type definition for more details.
+func WithLeaderHandler(d interface{}, h FnLeaderHandler) Option {
+	return withLeaderHandler{d, h}
+}
+
+type withBroadcastHandler struct {
+	d interface{}
+	h FnBroadcastHandler
+}
+
+func (w withBroadcastHandler) Apply(o *Op) {
+	o.fnBcData = w.d
+	o.fnBroadcast = w.h
+}
+
+// WithBroadcastHandler sets the node's callback function for broadcast messages
+// from anyone in the group using the Broadcast(...) API. Any arbitrary data
+// represented by 'd' will be passed to the callback 'h' every time it is called.
+// See 'FnBroadcastHandler' type definition for more details.
+func WithBroadcastHandler(d interface{}, h FnBroadcastHandler) Option {
+	return withBroadcastHandler{d, h}
+}
 
 type withLogger struct{ l *log.Logger }
 
@@ -110,12 +139,16 @@ type Op struct {
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
 
-	fnLeader FnLeaderHandler // leader message handler
-	fnData   interface{}     // arbitrary data passed to leader message handler
+	fnLeader    FnLeaderHandler    // leader message handler
+	fnLdrData   interface{}        // arbitrary data passed to fnLeader
+	fnBroadcast FnBroadcastHandler // broadcast message handler
+	fnBcData    interface{}        // arbitrary data passed to fnBroadcast
 
-	*spindle.Lock             // handles our distributed lock
-	active        int32       // 1=running, 0=off
-	logger        *log.Logger // internal logger
+	*spindle.Lock                     // handles our distributed lock
+	members       map[string]struct{} // key=id
+	mtx           sync.Mutex          // local mutex
+	active        int32               // 1=running, 0=off
+	logger        *log.Logger         // internal logger
 }
 
 // String implements the Stringer interface.
@@ -218,7 +251,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 					if o.fnLeader != nil {
 						payload := strings.Split(msg, " ")[1]
 						decoded, _ := base64.StdEncoding.DecodeString(payload)
-						r, e := o.fnLeader(o.fnData, decoded) // call leader handler
+						r, e := o.fnLeader(o.fnLdrData, decoded) // call leader handler
 						if e != nil {
 							reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
 						} else {
@@ -235,6 +268,26 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 
 				conn.Write([]byte(reply))
 				return // always end SND
+			case msg == CmdPing: // leader asking if we are online
+				reply := o.buildAckReply(nil)
+				conn.Write([]byte(reply))
+				return
+			case strings.HasPrefix(msg, CmdPing+" "): // heartbeat
+				o.addMember(strings.Split(msg, " ")[1])
+				reply := o.encodeMembers() + "\n"
+				conn.Write([]byte(reply))
+				return
+			case strings.HasPrefix(msg, CmdMembers+" "): // broadcast online members
+				payload := strings.Split(msg, " ")[1]
+				decoded, _ := base64.StdEncoding.DecodeString(payload)
+				var m map[string]struct{}
+				json.Unmarshal(decoded, &m)
+				m[o.hostPort] = struct{}{} // just to be sure
+				o.setMembers(m)            // then replace my records
+				o.logger.Printf("members=%v", len(o.getMembers()))
+				reply := o.buildAckReply(nil)
+				conn.Write([]byte(reply))
+				return
 			default:
 				return // close conn
 			}
@@ -253,6 +306,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 		}
 	}()
 
+	// Setup and start our internal spindle object.
 	o.Lock = spindle.New(
 		o.spannerClient,
 		o.lockTable,
@@ -261,12 +315,141 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 		spindle.WithId(o.hostPort),
 	)
 
-	spindledone := make(chan error, 1)
-	spindlectx, cancel := context.WithCancel(context.Background())
-	o.Lock.Run(spindlectx, spindledone)
+	spindleDone := make(chan error, 1)
+	spindleCtx, cancel := context.WithCancel(context.Background())
+	o.Lock.Run(spindleCtx, spindleDone)
 	defer func() {
 		cancel()      // stop spindle;
-		<-spindledone // and wait
+		<-spindleDone // and wait
+	}()
+
+	// Start active members tracking goroutine.
+	o.members[o.hostPort] = struct{}{}
+	mbchkDone := make(chan error, 1)
+	mbchkCtx := context.WithValue(ctx, struct{}{}, nil)
+	first := make(chan struct{}, 1)
+	first <- struct{}{} // immediately the first time
+	ticker := time.NewTicker(time.Millisecond * time.Duration(o.lockTimeout))
+	defer func() {
+		ticker.Stop()
+		<-mbchkDone
+	}()
+
+	go func() {
+		var active int32
+		ensureMembers := func() {
+			atomic.StoreInt32(&active, 1)
+			defer atomic.StoreInt32(&active, 0)
+			var w sync.WaitGroup
+			allm := o.getMembers()
+			todel := make(chan string, len(allm))
+			for k := range allm {
+				w.Add(1)
+				go func(id string) {
+					var rmid string
+					defer func(rm *string) {
+						todel <- rmid
+						w.Done()
+					}(&rmid)
+
+					timeout := time.Second * 5
+					conn, err := net.DialTimeout("tcp", id, timeout)
+					if err != nil {
+						o.logger.Printf("DialTimeout failed: %v", err)
+						rmid = id // delete this
+						return
+					}
+
+					r, err := o.send(conn, CmdPing+"\n")
+					if err != nil {
+						o.logger.Printf("[leader] send failed: %v", err)
+						rmid = id // delete this
+						return
+					}
+
+					if r != CmdAck {
+						o.logger.Printf("[leader] reply failed: %v", r)
+						rmid = id // delete this
+					}
+				}(k)
+			}
+
+			w.Wait()
+			for range allm {
+				rm := <-todel
+				if rm != "" {
+					o.logger.Printf("[leader] delete %v", rm)
+					o.delMember(rm)
+				}
+			}
+
+			for k := range o.getMembers() {
+				w.Add(1)
+				go func(id string) {
+					defer w.Done()
+					timeout := time.Second * 5
+					conn, err := net.DialTimeout("tcp", id, timeout)
+					if err != nil {
+						o.logger.Printf("[leader] DialTimeout failed: %v", err)
+						return
+					}
+
+					defer conn.Close()
+					msg := fmt.Sprintf("%v %v\n", CmdMembers, o.encodeMembers())
+					_, err = o.send(conn, msg)
+					if err != nil {
+						o.logger.Printf("[leader] send failed: %v", err)
+					}
+				}(k)
+			}
+
+			w.Wait()
+		}
+
+		var hbactive int32
+		heartbeat := func() {
+			atomic.StoreInt32(&hbactive, 1)
+			defer atomic.StoreInt32(&hbactive, 0)
+			lconn, err := o.getLeaderConn(ctx)
+			if err != nil {
+				o.logger.Printf("getLeaderConn failed: %v", err)
+				return
+			}
+
+			msg := fmt.Sprintf("%v %v\n", CmdPing, o.hostPort)
+			r, err := o.send(lconn, msg)
+			if err != nil {
+				o.logger.Printf("send failed: %v", err)
+				return
+			}
+
+			b, _ := base64.StdEncoding.DecodeString(r)
+			var allm map[string]struct{}
+			json.Unmarshal(b, &allm)
+			o.setMembers(allm)
+		}
+
+		for {
+			select {
+			case <-mbchkCtx.Done():
+				mbchkDone <- nil
+				return
+			case <-first:
+			case <-ticker.C:
+			}
+
+			if atomic.LoadInt32(&hbactive) == 0 {
+				go heartbeat()
+			}
+
+			if hl, _ := o.HasLock(); !hl {
+				continue
+			}
+
+			if atomic.LoadInt32(&active) == 0 {
+				go ensureMembers()
+			}
+		}
 	}()
 
 	atomic.StoreInt32(&o.active, 1)
@@ -384,46 +567,13 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	// For non-leaders, we confirm the leader via spindle, and if so, ask leader to do the
 	// actual write for us. Let's do a couple retries up to spindle's timeout.
-
-	var conn net.Conn
-	var confirmed bool
-	first := make(chan struct{}, 1)
-	first <- struct{}{} // immediately the first time
-	tcnt, tlimit := int64(0), (o.lockTimeout/2000)*2
-	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return context.Canceled
-		case <-first:
-		case <-ticker.C:
-		}
-
-		err = func() error {
-			lconn, err := o.getConn()
-			if err != nil {
-				return err
-			}
-
-			confirmed = true
-			conn = lconn
-			return nil
-		}()
-
-		tcnt++
-		if err == nil || (tcnt > tlimit) {
-			break
-		}
+	conn, err := o.getLeaderConn(ctx)
+	if err != nil {
+		return err
 	}
 
 	if conn != nil {
 		defer conn.Close()
-	}
-
-	if !confirmed {
-		return ErrNoLeader
 	}
 
 	b, _ := json.Marshal(kv)
@@ -434,7 +584,7 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		return err
 	}
 
-	o.logger.Printf("[Put] reply[2/2]: %v", reply)
+	o.logger.Printf("[Put] reply: %v", reply)
 
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
@@ -459,46 +609,13 @@ func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 		o.logger.Printf("[Send] duration=%v", time.Since(begin))
 	}(time.Now())
 
-	var err error
-	var conn net.Conn
-	var confirmed bool
-	first := make(chan struct{}, 1)
-	first <- struct{}{} // immediately the first time
-	tcnt, tlimit := int64(0), (o.lockTimeout/2000)*2
-	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, context.Canceled
-		case <-first:
-		case <-ticker.C:
-		}
-
-		err = func() error {
-			lconn, err := o.getConn()
-			if err != nil {
-				return err
-			}
-
-			confirmed = true
-			conn = lconn
-			return nil
-		}()
-
-		tcnt++
-		if err == nil || (tcnt > tlimit) {
-			break
-		}
+	conn, err := o.getLeaderConn(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	if conn != nil {
 		defer conn.Close()
-	}
-
-	if !confirmed {
-		return nil, ErrNoLeader
 	}
 
 	enc := base64.StdEncoding.EncodeToString(msg)
@@ -508,7 +625,7 @@ func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	o.logger.Printf("[Send] reply[2/2]: %v", reply)
+	o.logger.Printf("[Send] reply: %v", reply)
 
 	switch {
 	case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"
@@ -552,38 +669,116 @@ func (o *Op) buildAckReply(err error) string {
 	}
 }
 
-func (o *Op) getConn() (net.Conn, error) {
-	timeout := time.Second * 5
-	leader, err := o.Leader()
-	if err != nil {
-		return nil, err
+func (o *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
+	var conn net.Conn
+	var err error
+	subctx := context.WithValue(ctx, struct{}{}, nil)
+	first := make(chan struct{}, 1)
+	first <- struct{}{} // immediately the first time
+	tcnt, tlimit := int64(0), (o.lockTimeout/2000)*2
+	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
+	defer ticker.Stop()
+
+	var active int32
+	getConn := func() (net.Conn, error) {
+		atomic.StoreInt32(&active, 1)
+		defer atomic.StoreInt32(&active, 0)
+		timeout := time.Second * 5
+		leader, err := o.Leader()
+		if err != nil {
+			return nil, err
+		}
+
+		if leader == "" {
+			return nil, ErrNoLeader
+		}
+
+		lconn, err := net.DialTimeout("tcp", leader, timeout)
+		if err != nil {
+			o.logger.Printf("[getLeaderConn] DialTimeout failed: %v", err)
+			return nil, err
+		}
+
+		defer lconn.Close()
+		reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
+		if err != nil {
+			o.logger.Printf("[getLeaderConn] send failed: %v", err)
+			return nil, err
+		}
+
+		if !strings.HasPrefix(reply, CmdAck) {
+			return nil, ErrNoLeader
+		}
+
+		// Create a new connection to the confirmed leader.
+		return net.DialTimeout("tcp", leader, timeout)
 	}
 
-	if leader == "" {
-		return nil, ErrNoLeader
+	type conn_t struct {
+		conn net.Conn
+		err  error
 	}
 
-	o.logger.Printf("current leader is %v, confirm", leader)
-	lconn, err := net.DialTimeout("tcp", leader, timeout)
-	if err != nil {
-		o.logger.Printf("DialTimeout failed: %v", err)
-		return nil, err
+	for {
+		select {
+		case <-subctx.Done():
+			return nil, context.Canceled
+		case <-first:
+		case <-ticker.C:
+		}
+
+		if atomic.LoadInt32(&active) == 1 {
+			continue
+		}
+
+		ch := make(chan conn_t, 1)
+		go func() {
+			c, e := getConn()
+			ch <- conn_t{c, e}
+		}()
+
+		res := <-ch
+		conn = res.conn
+		err = res.err
+
+		tcnt++
+		if err == nil || (tcnt > tlimit) {
+			break
+		}
 	}
 
-	defer lconn.Close()
-	reply, err := o.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
-	if err != nil {
-		o.logger.Printf("send failed: %v", err)
-		return nil, err
-	}
+	return conn, nil
+}
 
-	o.logger.Printf("reply[1/2]: %v", reply)
-	if !strings.HasPrefix(reply, CmdAck) {
-		return nil, ErrNoLeader
-	}
+func (o *Op) getMembers() map[string]struct{} {
+	o.mtx.Lock()
+	defer o.mtx.Unlock()
+	return o.members
+}
 
-	// Create a new connection to the confirmed leader.
-	return net.DialTimeout("tcp", leader, timeout)
+func (o *Op) encodeMembers() string {
+	o.mtx.Lock()
+	defer o.mtx.Unlock()
+	b, _ := json.Marshal(o.members)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func (o *Op) setMembers(m map[string]struct{}) {
+	o.mtx.Lock()
+	defer o.mtx.Unlock()
+	o.members = m
+}
+
+func (o *Op) addMember(id string) {
+	o.mtx.Lock()
+	defer o.mtx.Unlock()
+	o.members[id] = struct{}{}
+}
+
+func (o *Op) delMember(id string) {
+	o.mtx.Lock()
+	defer o.mtx.Unlock()
+	delete(o.members, id)
 }
 
 // New creates an instance of Op. 'hostPort' should be in ip:port format. The internal spindle object
@@ -596,6 +791,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		lockTable:     lockTable,
 		lockName:      lockName,
 		logTable:      logTable,
+		members:       make(map[string]struct{}),
 	}
 
 	for _, opt := range opts {
