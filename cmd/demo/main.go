@@ -68,6 +68,17 @@ func onMessage(app interface{}, data []byte) error {
 		}
 
 		log.Printf("reply(send): %v", string(v))
+	case "broadcast": // broadcast <payload>
+		if len(ss) < 2 {
+			log.Println("invalid msg fmt, should be `broadcast <msg>`")
+			break
+		}
+
+		vv := o.Broadcast(context.Background(), []byte(ss[1]))
+		for _, v := range vv {
+			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
+				v.Id, string(v.Reply), v.Error)
+		}
 	}
 
 	return nil
@@ -86,9 +97,16 @@ func main() {
 		hedge.WithLeaderHandler(
 			xdata,
 			func(data interface{}, msg []byte) ([]byte, error) {
-				log.Println("xdata:", data.(string))
-				log.Println("received:", string(msg))
-				return []byte("hello " + string(msg)), nil
+				log.Println("[send] xdata:", data.(string))
+				log.Println("[send] received:", string(msg))
+				return []byte("send " + string(msg)), nil
+			}),
+		hedge.WithBroadcastHandler(
+			xdata,
+			func(data interface{}, msg []byte) ([]byte, error) {
+				log.Println("[broadcast] xdata:", data.(string))
+				log.Println("[broadcast] received:", string(msg))
+				return []byte("broadcast " + string(msg)), nil
 			}),
 	)
 

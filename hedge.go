@@ -215,7 +215,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 
 				conn.Write([]byte(reply))
-				return // always end LDR
+				return
 			case strings.HasPrefix(msg, CmdWrite+" "): // actual write
 				reply := o.buildAckReply(nil)
 				if hl, _ := o.HasLock(); hl {
@@ -234,7 +234,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 
 				conn.Write([]byte(reply))
-				return // always end PUT
+				return
 			case strings.HasPrefix(msg, CmdSend+" "): // Send(...) API
 				reply := base64.StdEncoding.EncodeToString([]byte(ErrNoLeader.Error())) + "\n"
 				if hl, _ := o.HasLock(); hl {
@@ -258,7 +258,28 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 
 				conn.Write([]byte(reply))
-				return // always end SND
+				return
+			case strings.HasPrefix(msg, CmdBroadcast+" "): // Broadcast(...) API
+				reply := base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error())) + "\n"
+				if o.fnBroadcast != nil {
+					payload := strings.Split(msg, " ")[1]
+					decoded, _ := base64.StdEncoding.DecodeString(payload)
+					r, e := o.fnBroadcast(o.fnBcData, decoded) // call broadcast handler
+					if e != nil {
+						reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
+					} else {
+						br := base64.StdEncoding.EncodeToString([]byte(""))
+						if r != nil {
+							br = base64.StdEncoding.EncodeToString(r)
+						}
+
+						// The final correct reply format.
+						reply = fmt.Sprintf("%v %v\n", CmdAck, br)
+					}
+				}
+
+				conn.Write([]byte(reply))
+				return
 			case msg == CmdPing: // leader asking if we are online
 				reply := o.buildAckReply(nil)
 				conn.Write([]byte(reply))
@@ -592,6 +613,8 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 	return nil
 }
 
+// Send sends 'msg' to the current leader. Any node can send messages,
+// including the leader itself (send to self).
 func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	if atomic.LoadInt32(&o.active) != 1 {
 		return nil, ErrNotRunning
@@ -629,6 +652,76 @@ func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 
 	// If not ACK, then the whole reply is an error string.
 	return base64.StdEncoding.DecodeString(reply)
+}
+
+type BroadcastOutput struct {
+	Id    string
+	Reply []byte
+	Error error
+}
+
+// Broadcast sends 'msg' to all nodes (send to all). Any node can broadcast
+// messages, including the leader itself. Note that this is best-effort
+// basis only; by the time you call this API, the handler might not have
+// all the active members in record yet, as is the usual situation with
+// k8s deployments, where pods come and go, and our internal heartbeat
+// protocol hasn't been completed yet.
+func (o *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
+	if atomic.LoadInt32(&o.active) != 1 {
+		return nil
+	}
+
+	defer func(begin time.Time) {
+		o.logger.Printf("[Broadcast] duration=%v", time.Since(begin))
+	}(time.Now())
+
+	outs := []BroadcastOutput{}
+	var w sync.WaitGroup
+	members := o.getMembers()
+	outch := make(chan BroadcastOutput, len(members))
+	for k := range members {
+		w.Add(1)
+		go func(id string) {
+			defer w.Done()
+			timeout := time.Second * 5
+			conn, err := net.DialTimeout("tcp", id, timeout)
+			if err != nil {
+				err = fmt.Errorf("DialTimeout failed: %v", err)
+				outch <- BroadcastOutput{Id: id, Error: err}
+				return
+			}
+
+			defer conn.Close()
+			enc := base64.StdEncoding.EncodeToString(msg)
+			reply, err := o.send(conn, fmt.Sprintf("%v %v\n", CmdBroadcast, enc))
+			if err != nil {
+				err = fmt.Errorf("send failed: %v", err)
+				outch <- BroadcastOutput{Id: id, Error: err}
+				return
+			}
+
+			switch {
+			case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"
+				ss := strings.Split(reply, " ")
+				if len(ss) > 1 {
+					r, e := base64.StdEncoding.DecodeString(ss[1])
+					outch <- BroadcastOutput{Id: id, Reply: r, Error: e}
+					return
+				}
+			}
+
+			// If not ACK, then the whole reply is an error string.
+			r, _ := base64.StdEncoding.DecodeString(reply)
+			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf(string(r))}
+		}(k)
+	}
+
+	w.Wait()
+	for range members {
+		outs = append(outs, <-outch)
+	}
+
+	return outs
 }
 
 func (o *Op) send(conn net.Conn, msg string) (string, error) {
