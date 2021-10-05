@@ -100,14 +100,16 @@ func main() {
 				log.Println("[send] xdata:", data.(string))
 				log.Println("[send] received:", string(msg))
 				return []byte("send " + string(msg)), nil
-			}),
+			},
+		),
 		hedge.WithBroadcastHandler(
 			xdata,
 			func(data interface{}, msg []byte) ([]byte, error) {
 				log.Println("[broadcast] xdata:", data.(string))
 				log.Println("[broadcast] received:", string(msg))
 				return []byte("broadcast " + string(msg)), nil
-			}),
+			},
+		),
 	)
 
 	log.Println(s)

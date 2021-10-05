@@ -109,6 +109,8 @@ func (w withBroadcastHandler) Apply(o *Op) {
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
 // represented by 'd' will be passed to the callback 'h' every time it is called.
 // The handler's returning []byte will serve as reply.
+//
+// A nil broadcast handler disables the internal heartbeat function.
 func WithBroadcastHandler(d interface{}, h FnMsgHandler) Option {
 	return withBroadcastHandler{d, h}
 }
@@ -346,6 +348,12 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 			case <-ticker.C:
 			}
 
+			if o.fnBroadcast == nil {
+				o.logger.Println("no broadcast support")
+				mbchkDone <- nil
+				return
+			}
+
 			if atomic.LoadInt32(&hbactive) == 0 {
 				go heartbeat() // tell leader we're online
 			}
@@ -564,8 +572,8 @@ type BroadcastOutput struct {
 // protocol hasn't been completed yet. This call will also block until it
 // receives all the reply from all nodes' broadcast handlers.
 func (o *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
-	if atomic.LoadInt32(&o.active) != 1 {
-		return nil
+	if atomic.LoadInt32(&o.active) != 1 || o.fnBroadcast == nil {
+		return nil // not running or no broadcast support
 	}
 
 	defer func(begin time.Time) {
