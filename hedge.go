@@ -247,6 +247,8 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 			var w sync.WaitGroup
 			allm := o.getMembers()
 			todel := make(chan string, len(allm))
+			
+			// Make sure each member is online.
 			for k := range allm {
 				w.Add(1)
 				go func(id string) {
@@ -287,6 +289,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 			}
 
+			// Broadcast active members to all.
 			for k := range o.getMembers() {
 				w.Add(1)
 				go func(id string) {
@@ -344,7 +347,7 @@ func (o *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			if atomic.LoadInt32(&hbactive) == 0 {
-				go heartbeat()
+				go heartbeat() // tell leader we're online
 			}
 
 			if hl, _ := o.HasLock(); !hl {
