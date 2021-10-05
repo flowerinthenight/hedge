@@ -452,10 +452,6 @@ order by timestamp limit 1`
 // Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
 // timeout, to wait for the leader's availability to do actual writes before returning.
 func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
-	if atomic.LoadInt32(&o.active) != 1 {
-		return ErrNotRunning
-	}
-
 	defer func(begin time.Time) {
 		o.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
@@ -520,10 +516,6 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 // including the leader itself (send to self). It also blocks until it
 // receives the reply from the leader's message handler.
 func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
-	if atomic.LoadInt32(&o.active) != 1 {
-		return nil, ErrNotRunning
-	}
-
 	defer func(begin time.Time) {
 		o.logger.Printf("[Send] duration=%v", time.Since(begin))
 	}(time.Now())
