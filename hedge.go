@@ -506,7 +506,8 @@ func (o *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 }
 
 // Send sends 'msg' to the current leader. Any node can send messages,
-// including the leader itself (send to self).
+// including the leader itself (send to self). It also blocks until it
+// receives the reply from the leader's message handler.
 func (o *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	if atomic.LoadInt32(&o.active) != 1 {
 		return nil, ErrNotRunning
@@ -557,7 +558,8 @@ type BroadcastOutput struct {
 // basis only; by the time you call this API, the handler might not have
 // all the active members in record yet, as is the usual situation with
 // k8s deployments, where pods come and go, and our internal heartbeat
-// protocol hasn't been completed yet.
+// protocol hasn't been completed yet. This call will also block until it
+// receives all the reply from all nodes' broadcast handlers.
 func (o *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 	if atomic.LoadInt32(&o.active) != 1 {
 		return nil
