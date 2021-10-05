@@ -1,7 +1,7 @@
 [![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
 
 ## hedge
-A library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes deployments. Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through `spindle`, a simple member-leader communication mechanism, and a distributed semaphore (WIP).
+A library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes deployments. Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through `spindle`, a simple member-leader communication and broadcast mechanism, and a distributed semaphore (WIP).
 
 ## Why?
 In a nutshell, I wanted something much simpler than using [Raft](https://raft.github.io/) (my [progress](https://github.com/flowerinthenight/testqrm) on that front is quite slow), or worse, [Paxos](https://en.wikipedia.org/wiki/Paxos_(computer_science)) (Raft maybe as the long-term goal). And I wanted an easily-accessible storage that is a bit decoupled from the code (easier to edit, debug, backup, etc). We are already a heavy Spanner user, and `spindle` has been in our production for quite a while now: these two should be able to do it, preferably on a k8s Deployment; StatefulSets or DaemonSets shouldn't be a requirement. Since then, additional features have been added, such as the `Send()` API.
@@ -12,6 +12,8 @@ Leader election is handled by `spindle`. Two APIs are provided for storage: `Put
 `spindle`'s `HasLock()` function is also available for distributed locking due to struct embedding, although you can use `spindle` separately for that, if you prefer.
 
 A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader at any time.
+
+A `Broadcast()` API is also available for all pods. Note that due to the nature of k8s deployments (pods come and go) and the internal heartbeat delays, some pods might not receive the broadcast message at call time, although all pods will have the complete broadcast target list eventually.
 
 Finally, a distributed semaphore is currently in the works and will be available shortly.
 
@@ -48,9 +50,17 @@ op := hedge.New(
     hedge.WithLeaderHandler(
         xdata,
         func(data interface{}, msg []byte) ([]byte, error) {
-            log.Println("xdata:", data.(string))
-            log.Println("received:", string(msg))
+            log.Println("[send] xdata:", data.(string))
+            log.Println("[send] received:", string(msg))
             return []byte("hello " + string(msg)), nil
+        },
+    ),
+    hedge.WithBroadcastHandler(
+        xdata,
+        func(data interface{}, msg []byte) ([]byte, error) {
+            log.Println("[broadcast] xdata:", data.(string))
+            log.Println("[broadcast] received:", string(msg))
+            return []byte("broadcast " + string(msg)), nil
         },
     ),
 })
@@ -62,6 +72,7 @@ go op.Run(ctx, done)
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
 // For distributed locking, any pod can call op.HasLock() here.
 // Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
+// For broadcast, any pod can call op.Broadcast(...) here.
 
 cancel()
 <-done
