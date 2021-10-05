@@ -72,7 +72,8 @@ go op.Run(ctx, done)
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
 // For distributed locking, any pod can call op.HasLock() here.
 // Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
-// For broadcast, any pod can call op.Broadcast(...) here.
+// For broadcast, any pod can call op.Broadcast(...) here which will be handled by each
+//   pod's WithBroadcastHandler callback.
 
 cancel()
 <-done
