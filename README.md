@@ -93,4 +93,7 @@ $ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
 
 # Test the Send() API
 $ gcloud pubsub topics publish hedge-demo-pubctrl --message='send world'
+
+# Test the Broadcast() API
+$ gcloud pubsub topics publish hedge-demo-pubctrl --message='broadcast hello'
 ```
