@@ -47,7 +47,7 @@ op := hedge.New(
     "locktable",
     "myspindlelock",
     "logtable",
-    hedge.WithLeaderHandler(
+    hedge.WithLeaderHandler( // if leader only, handles Send()
         xdata,
         func(data interface{}, msg []byte) ([]byte, error) {
             log.Println("[send] xdata:", data.(string))
@@ -55,7 +55,7 @@ op := hedge.New(
             return []byte("hello " + string(msg)), nil
         },
     ),
-    hedge.WithBroadcastHandler(
+    hedge.WithBroadcastHandler( // handles Broadcast()
         xdata,
         func(data interface{}, msg []byte) ([]byte, error) {
             log.Println("[broadcast] xdata:", data.(string))
