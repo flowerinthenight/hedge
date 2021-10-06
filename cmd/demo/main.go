@@ -92,6 +92,7 @@ func main() {
 		return
 	}
 
+	defer client.Close()
 	xdata := "some arbitrary data"
 	s := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithLeaderHandler(
