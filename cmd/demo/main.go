@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -78,6 +79,23 @@ func onMessage(app interface{}, data []byte) error {
 		for _, v := range vv {
 			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
 				v.Id, string(v.Reply), v.Error)
+		}
+	case "create-sem": // create-sem <name> <limit>
+		if len(ss) != 3 {
+			log.Println("invalid msg fmt, should be `create-sem <name> <limit>`")
+			break
+		}
+
+		lmt, err := strconv.Atoi(ss[2])
+		if err != nil {
+			log.Println("invalid msg fmt, should be `create-sem <name> <limit>`")
+			break
+		}
+
+		_, err = o.NewSemaphore(context.Background(), ss[1], lmt)
+		if err != nil {
+			log.Printf("NewSemaphore failed: %v", err)
+			break
 		}
 	}
 
