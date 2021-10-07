@@ -13,10 +13,6 @@ const (
 	semLimitf = "limit=%v"
 )
 
-var (
-	ErrNotImplemented = fmt.Errorf("hedge: not implemented")
-)
-
 type Semaphore struct {
 	name  string
 	limit int
@@ -24,14 +20,12 @@ type Semaphore struct {
 }
 
 func (s *Semaphore) Acquire(ctx context.Context, name string) error {
-	return ErrNotImplemented
+	return nil
 }
 
-func (s *Semaphore) TryAcquire(ctx context.Context, name string) error {
-	return ErrNotImplemented
-}
-
-// Attempt to write the semaphore records. This could fail.
+// Attempt to write the semaphore record. This could fail.
+// We will use the current 'logTable' as our semaphore storage.
+// Naming: key="hedge/semaphore/{name}", id="limit={v}", value="{caller}"
 func createSemaphoreEntry(ctx context.Context, op *Op, name, caller string, limit int) error {
 	_, err := op.spannerClient.ReadWriteTransaction(
 		ctx,
@@ -55,17 +49,16 @@ values (
 	return err
 }
 
-func readSemaphoreEntry(ctx context.Context, op *Op, name string, limit int) (*LogItem, error) {
+func readSemaphoreEntry(ctx context.Context, op *Op, name string) (*LogItem, error) {
 	sql := `
 select key, id, value, leader, timestamp
 from ` + op.logTable + `
-where key = @name and id = @id`
+where key = @name`
 
 	stmt := spanner.Statement{
 		SQL: sql,
 		Params: map[string]interface{}{
 			"name": fmt.Sprintf(semNamef, name),
-			"id":   fmt.Sprintf(semLimitf, limit),
 		},
 	}
 

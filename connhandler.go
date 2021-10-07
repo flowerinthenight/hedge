@@ -121,29 +121,36 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				name, slimit, caller := ss[1], ss[2], ss[3]
 				limit, err := strconv.Atoi(slimit)
 				if err != nil {
-					reply = base64.StdEncoding.EncodeToString([]byte(err.Error())) + "\n"
+					reply = op.buildAckReply(err)
 					return
 				}
 
-				// We will use the current 'logTable' as our semaphore storage.
-				// Naming: key="hedge/semaphore/{name}", id="limit={v}", value="{caller}"
-				err = createSemaphoreEntry(ctx, op, name, caller, limit)
+				// See if this semaphore already exists.
+				s, err := readSemaphoreEntry(ctx, op, name)
 				if err != nil {
-					op.logger.Printf("createSemaphoreEntry failed: %v, try read", err)
-					v, err := readSemaphoreEntry(ctx, op, name, limit)
+					op.logger.Printf("readSemaphoreEntry failed: %v, attempt create", err)
+					err = createSemaphoreEntry(ctx, op, name, caller, limit)
 					if err != nil {
-						op.logger.Printf("readSemaphoreEntry failed: %v", err)
+						op.logger.Printf("createSemaphoreEntry failed: %v", err)
 						reply = op.buildAckReply(err)
 						return
 					}
 
-					op.logger.Printf("return existing semaphore: %v", v)
+					op.logger.Printf("semaphore created: name=%v, limit=%v, caller=%v",
+						name, limit, caller)
 					return
 				}
 
-				// Newly-created semaphore.
-				op.logger.Printf("semaphore created: name=%v, limit=%v, caller=%v",
-					name, limit, caller)
+				// See if limit matches.
+				slmt, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
+				if slmt != limit {
+					err = fmt.Errorf("semaphore already exists with a different limit")
+					reply = op.buildAckReply(err)
+					return
+				}
+
+				op.logger.Printf("return existing semaphore: %v", s)
+				return
 			}()
 
 			conn.Write([]byte(reply))

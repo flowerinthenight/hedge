@@ -25,7 +25,7 @@ var (
 )
 
 func onMessage(app interface{}, data []byte) error {
-	o := app.(*hedge.Op)
+	op := app.(*hedge.Op)
 	ctx := context.Background()
 
 	log.Println("recv:", string(data))
@@ -38,7 +38,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		err := o.Put(ctx, hedge.KeyValue{
+		err := op.Put(ctx, hedge.KeyValue{
 			Key:   ss[1],
 			Value: ss[2],
 		})
@@ -48,7 +48,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 	case "get": // "get <key>"
-		v, err := o.Get(ctx, ss[1])
+		v, err := op.Get(ctx, ss[1])
 		if err != nil {
 			log.Println(err)
 			break
@@ -62,7 +62,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		v, err := o.Send(context.Background(), []byte(ss[1]))
+		v, err := op.Send(context.Background(), []byte(ss[1]))
 		if err != nil {
 			log.Println(err)
 			break
@@ -75,7 +75,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		vv := o.Broadcast(context.Background(), []byte(ss[1]))
+		vv := op.Broadcast(context.Background(), []byte(ss[1]))
 		for _, v := range vv {
 			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
 				v.Id, string(v.Reply), v.Error)
@@ -92,7 +92,7 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		_, err = o.NewSemaphore(context.Background(), ss[1], lmt)
+		_, err = op.NewSemaphore(context.Background(), ss[1], lmt)
 		if err != nil {
 			log.Printf("NewSemaphore failed: %v", err)
 			break
@@ -112,7 +112,7 @@ func main() {
 
 	defer client.Close()
 	xdata := "some arbitrary data"
-	s := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
+	op := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithLeaderHandler(
 			xdata,
 			func(data interface{}, msg []byte) ([]byte, error) {
@@ -131,10 +131,10 @@ func main() {
 		),
 	)
 
-	log.Println(s)
+	log.Println(op)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go s.Run(ctx, done)
+	go op.Run(ctx, done)
 
 	project := strings.Split(client.DatabaseName(), "/")[1]
 	t, err := lspubsub.GetTopic(project, "hedge-demo-pubctrl")
@@ -150,7 +150,7 @@ func main() {
 
 	donectl := make(chan error, 1)
 	go func() {
-		lscmd := lspubsub.NewLengthySubscriber(s, project, subname, onMessage, lspubsub.WithNoExtend(true))
+		lscmd := lspubsub.NewLengthySubscriber(op, project, subname, onMessage, lspubsub.WithNoExtend(true))
 		err := lscmd.Start(context.WithValue(ctx, struct{}{}, nil), donectl)
 		if err != nil {
 			log.Fatal(err)
