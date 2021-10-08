@@ -81,6 +81,7 @@ func onMessage(app interface{}, data []byte) error {
 				v.Id, string(v.Reply), v.Error)
 		}
 	case "create-sem": // create-sem <name> <limit>
+		ctx := context.Background()
 		if len(ss) != 3 {
 			log.Println("invalid msg fmt, should be `create-sem <name> <limit>`")
 			break
@@ -92,11 +93,19 @@ func onMessage(app interface{}, data []byte) error {
 			break
 		}
 
-		_, err = op.NewSemaphore(context.Background(), ss[1], lmt)
+		s, err := op.NewSemaphore(ctx, ss[1], lmt)
 		if err != nil {
 			log.Printf("NewSemaphore failed: %v", err)
 			break
 		}
+
+		err = s.Acquire(ctx)
+		if err != nil {
+			log.Printf("Acquire failed: %v", err)
+			break
+		}
+
+		log.Printf("semaphore acquired: %v", ss[1])
 	}
 
 	return nil

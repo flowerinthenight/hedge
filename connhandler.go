@@ -155,6 +155,41 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 
 			conn.Write([]byte(reply))
 			return
+		case strings.HasPrefix(msg, CmdSemAcquire+" "): // acquire semaphore; we are leader
+			reply := op.buildAckReply(nil)
+			func() {
+				op.mtxSem.Lock()
+				defer op.mtxSem.Unlock()
+				ss := strings.Split(msg, " ")
+				name, caller := ss[1], ss[2]
+				s, err := readSemaphoreEntry(ctx, op, name) // to get the current limit
+				if err != nil {
+					op.logger.Printf("readSemaphoreEntry failed: %v, attempt create", err)
+					err = fmt.Errorf("0:%v", err) // final
+					reply = op.buildAckReply(err)
+					return
+				}
+
+				limit, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
+				retry, err := createAcquireSemaphoreEntry(ctx, op, name, caller, limit)
+				if err != nil {
+					op.logger.Printf("createAcquireSemaphoreEntry failed: %v, %v", retry, err)
+					switch {
+					case retry:
+						err = fmt.Errorf("1:%v", err) // can retry
+					default:
+						err = fmt.Errorf("0:%v", err) // final
+					}
+
+					reply = op.buildAckReply(err)
+					return
+				}
+
+				op.logger.Printf("semaphore acquired")
+				return
+			}()
+			conn.Write([]byte(reply))
+			return
 		default:
 			return // close conn
 		}

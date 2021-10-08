@@ -29,7 +29,7 @@ const (
 	CmdBroadcast  = "ALL" // broadcast to all, fmt="ALL base64(payload)"
 	CmdAck        = "ACK" // generic reply, fmt="ACK"|"ACK base64(err)"|"ACK base64(JSON(members))"
 	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name} {limit} {caller}, reply="ACK"
-	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}"
+	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}", reply="ACK[ base64([0:|1:]err)]" (0=final,1=retry)
 	CmdSemRelease = "SER" // release semaphore, fmt="SER {name} {caller}"
 )
 
