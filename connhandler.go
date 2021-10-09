@@ -188,6 +188,7 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				op.logger.Printf("semaphore acquired")
 				return
 			}()
+
 			conn.Write([]byte(reply))
 			return
 		default:
