@@ -82,7 +82,8 @@ func (w withLeaderHandler) Apply(op *Op) {
 // WithLeaderHandler sets the node's callback function when it is the current
 // leader and when members send messages to it using the Send(...) API. Any
 // arbitrary data represented by 'd' will be passed to the callback 'h' every
-// time it is called. The handler's returning []byte will serve as reply.
+// time it is called. If 'd' is nil, the default callback data will be the *Op
+// object itself. The handler's returning []byte will serve as reply.
 //
 // Typical flow would be:
 // 1) Any node (including the leader) calls the Send(...) API.
@@ -108,7 +109,8 @@ func (w withBroadcastHandler) Apply(op *Op) {
 // WithBroadcastHandler sets the node's callback function for broadcast messages
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
 // represented by 'd' will be passed to the callback 'h' every time it is called.
-// The handler's returning []byte will serve as reply.
+// If 'd' is nil, the default callback data will be the *Op object itself. The
+// handler's returning []byte will serve as reply.
 //
 // A nil broadcast handler disables the internal heartbeat function.
 func WithBroadcastHandler(d interface{}, h FnMsgHandler) Option {
@@ -154,6 +156,9 @@ func (op *Op) String() string {
 		op.logTable,
 	)
 }
+
+// hostPort returns the host:port (or name) of this instance.
+func (op *Op) HostPost() string { return op.hostPort }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
 // optionally sending an error message to 'done' when finished.
@@ -404,8 +409,6 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 		return nil, err
 	}
 
-	op.logger.Printf("reply: %v", reply)
-
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
 		ss := strings.Split(reply, " ")
@@ -532,8 +535,6 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 		return err
 	}
 
-	op.logger.Printf("[Put] reply: %v", reply)
-
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
 		ss := strings.Split(reply, " ")
@@ -571,8 +572,6 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 		op.logger.Printf("[Send] send failed: %v", err)
 		return nil, err
 	}
-
-	op.logger.Printf("[Send] reply: %v", reply)
 
 	switch {
 	case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"

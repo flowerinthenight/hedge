@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
 	"strconv"
@@ -81,35 +83,16 @@ func onMessage(app interface{}, data []byte) error {
 			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
 				v.Id, string(v.Reply), v.Error)
 		}
-	case "create-sem": // create-sem <name> <limit>
-		ctx := context.Background()
+	case "semaphore": // semaphore <name> <limit>
+		// Whoever receives this msg will do a broadcast to all nodes, which in turn
+		// will attempt to acquire the semaphore <name>.
 		if len(ss) != 3 {
-			log.Println("invalid msg fmt, should be `create-sem <name> <limit>`")
+			log.Println("invalid msg fmt, should be `semaphore <name> <limit>`")
 			break
 		}
 
-		lmt, err := strconv.Atoi(ss[2])
-		if err != nil {
-			log.Println("invalid msg fmt, should be `create-sem <name> <limit>`")
-			break
-		}
-
-		s, err := op.NewSemaphore(ctx, ss[1], lmt)
-		if err != nil {
-			log.Printf("NewSemaphore failed: %v", err)
-			break
-		}
-
-		err = s.Acquire(ctx)
-		if err != nil {
-			log.Printf("Acquire failed: %v", err)
-			break
-		}
-
-		log.Printf("semaphore acquired: %v", ss[1])
-		time.Sleep(time.Second * 1)
-		err = s.Release(ctx)
-		log.Printf("semaphore released, err=%v", err)
+		msg := fmt.Sprintf("%v %v", ss[1], ss[2])
+		op.Broadcast(context.Background(), []byte(msg))
 	}
 
 	return nil
@@ -117,6 +100,7 @@ func onMessage(app interface{}, data []byte) error {
 
 func main() {
 	flag.Parse()
+	rand.Seed(time.Now().UnixNano())
 	client, err := spanner.NewClient(context.Background(), *dbstr)
 	if err != nil {
 		log.Println(err)
@@ -127,7 +111,7 @@ func main() {
 	xdata := "some arbitrary data"
 	op := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithLeaderHandler(
-			xdata,
+			xdata, // if you don't need *Op object
 			func(data interface{}, msg []byte) ([]byte, error) {
 				log.Println("[send] xdata:", data.(string))
 				log.Println("[send] received:", string(msg))
@@ -135,11 +119,41 @@ func main() {
 			},
 		),
 		hedge.WithBroadcastHandler(
-			xdata,
+			nil, // since this is nil, 'data' should be 'op'
 			func(data interface{}, msg []byte) ([]byte, error) {
-				log.Println("[broadcast] xdata:", data.(string))
-				log.Println("[broadcast] received:", string(msg))
-				return []byte("broadcast " + string(msg)), nil
+				log.Println("[broadcast/semaphore] received:", string(msg))
+				ss := strings.Split(string(msg), " ")
+				name, slimit := ss[0], ss[1]
+				limit, err := strconv.Atoi(slimit)
+				if err != nil {
+					log.Println("invalid limit:", err)
+					return nil, err
+				}
+
+				go func() {
+					op := data.(*hedge.Op)
+					min, max := 10, 30
+					tm := rand.Intn(max-min+1) + min
+					s, err := op.NewSemaphore(context.Background(), name, limit)
+					if err != nil {
+						log.Println("NewSemaphore failed:", err)
+						return
+					}
+
+					err = s.Acquire(context.Background())
+					if err != nil {
+						log.Println("Acquire failed:", err)
+						return
+					}
+
+					log.Printf("semaphore acquired! simulate work for %vs, id=%v", tm, op.HostPost())
+					time.Sleep(time.Second * time.Duration(tm))
+
+					log.Printf("release semaphore, id=%v", op.HostPost())
+					s.Release(context.Background())
+				}()
+
+				return nil, nil
 			},
 		),
 	)

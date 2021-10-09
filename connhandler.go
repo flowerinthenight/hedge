@@ -54,7 +54,12 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				if op.fnLeader != nil {
 					payload := strings.Split(msg, " ")[1]
 					decoded, _ := base64.StdEncoding.DecodeString(payload)
-					r, e := op.fnLeader(op.fnLdrData, decoded) // call leader handler
+					data := op.fnLdrData
+					if data == nil {
+						data = op
+					}
+
+					r, e := op.fnLeader(data, decoded) // call leader handler
 					if e != nil {
 						reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
 					} else {
@@ -76,7 +81,12 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 			if op.fnBroadcast != nil {
 				payload := strings.Split(msg, " ")[1]
 				decoded, _ := base64.StdEncoding.DecodeString(payload)
-				r, e := op.fnBroadcast(op.fnBcData, decoded) // call broadcast handler
+				data := op.fnBcData
+				if data == nil {
+					data = op
+				}
+
+				r, e := op.fnBroadcast(data, decoded) // call broadcast handler
 				if e != nil {
 					reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
 				} else {
@@ -128,29 +138,26 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				// See if this semaphore already exists.
 				s, err := readSemaphoreEntry(ctx, op, name)
 				if err != nil {
-					op.logger.Printf("readSemaphoreEntry failed: %v, attempt create", err)
 					err = createSemaphoreEntry(ctx, op, name, caller, limit)
 					if err != nil {
-						op.logger.Printf("createSemaphoreEntry failed: %v", err)
 						reply = op.buildAckReply(err)
 						return
 					}
 
-					op.logger.Printf("semaphore created: name=%v, limit=%v, caller=%v",
-						name, limit, caller)
-					return
+					// Read again after create.
+					s, err = readSemaphoreEntry(ctx, op, name)
+					if err != nil {
+						reply = op.buildAckReply(err)
+						return
+					}
 				}
 
-				// See if limit matches.
 				slmt, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
 				if slmt != limit {
 					err = fmt.Errorf("semaphore already exists with a different limit")
 					reply = op.buildAckReply(err)
 					return
 				}
-
-				op.logger.Printf("return existing semaphore: %v", s)
-				return
 			}()
 
 			conn.Write([]byte(reply))
@@ -164,7 +171,6 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				name, caller := ss[1], ss[2]
 				s, err := readSemaphoreEntry(ctx, op, name) // to get the current limit
 				if err != nil {
-					op.logger.Printf("readSemaphoreEntry failed: %v, attempt create", err)
 					err = fmt.Errorf("0:%v", err) // final
 					reply = op.buildAckReply(err)
 					return
@@ -173,7 +179,6 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				limit, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
 				retry, err := createAcquireSemaphoreEntry(ctx, op, name, caller, limit)
 				if err != nil {
-					op.logger.Printf("createAcquireSemaphoreEntry failed: %v, %v", retry, err)
 					switch {
 					case retry:
 						err = fmt.Errorf("1:%v", err) // can retry
@@ -184,9 +189,6 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 					reply = op.buildAckReply(err)
 					return
 				}
-
-				op.logger.Printf("semaphore acquired")
-				return
 			}()
 
 			conn.Write([]byte(reply))
@@ -200,21 +202,16 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				name, caller := ss[1], ss[2]
 				s, err := readSemaphoreEntry(ctx, op, name) // to get the current limit
 				if err != nil {
-					op.logger.Printf("readSemaphoreEntry failed: %v", err)
 					reply = op.buildAckReply(err)
 					return
 				}
 
 				limit, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
-				err = releaseSemaphore(ctx, op, name, caller, limit)
+				err = releaseSemaphore(ctx, op, name, caller, s.Value, limit)
 				if err != nil {
-					op.logger.Printf("releaseSemaphore failed: %v", err)
 					reply = op.buildAckReply(err)
 					return
 				}
-
-				op.logger.Printf("semaphore released")
-				return
 			}()
 
 			conn.Write([]byte(reply))

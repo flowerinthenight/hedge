@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	semNamef  = "hedge/semaphore/%v"
-	semLimitf = "limit=%v"
+	semNamef   = "__hedge/semaphore/%v"
+	semCallerf = "__caller=%v"
+	semLimitf  = "limit=%v"
+	markDel    = "delete-on-empty"
 )
 
 // Semaphore represents a distributed semaphore object.
@@ -54,8 +56,6 @@ func (s *Semaphore) Acquire(ctx context.Context) error {
 			s.op.logger.Printf("send failed: %v", err)
 			return false, err
 		}
-
-		s.op.logger.Printf("reply: %v", reply)
 
 		switch {
 		case strings.HasPrefix(reply, CmdAck):
@@ -109,7 +109,6 @@ func (s *Semaphore) Acquire(ctx context.Context) error {
 			return nil
 		default:
 			if ret.retry {
-				s.op.logger.Printf("retry: %v", ret.err)
 				continue
 			} else {
 				return ret.err
@@ -140,8 +139,6 @@ func (s *Semaphore) Release(ctx context.Context) error {
 		return err
 	}
 
-	s.op.logger.Printf("reply: %v", reply)
-
 	switch {
 	case strings.HasPrefix(reply, CmdAck):
 		ss := strings.Split(reply, " ")
@@ -157,8 +154,7 @@ func (s *Semaphore) Release(ctx context.Context) error {
 // We will use the current 'logTable' as our semaphore storage.
 // Naming: key="hedge/semaphore/{name}", id="limit={v}", value={caller}
 func createSemaphoreEntry(ctx context.Context, op *Op, name, caller string, limit int) error {
-	_, err := op.spannerClient.ReadWriteTransaction(
-		ctx,
+	_, err := op.spannerClient.ReadWriteTransaction(ctx,
 		func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 			sql := `
 insert ` + op.logTable + `
@@ -168,8 +164,7 @@ values (
   '` + fmt.Sprintf(semLimitf, limit) + `',
   '` + caller + `',
   '` + op.hostPort + `',
-  PENDING_COMMIT_TIMESTAMP()
-)`
+  PENDING_COMMIT_TIMESTAMP())`
 
 			_, err := txn.Update(ctx, spanner.Statement{SQL: sql})
 			return err
@@ -223,7 +218,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 	stmt := spanner.Statement{
 		SQL: sql,
 		Params: map[string]interface{}{
-			"key": fmt.Sprintf("__caller=%v", caller),
+			"key": fmt.Sprintf(semCallerf, caller),
 			"id":  fmt.Sprintf(semNamef, name),
 		},
 	}
@@ -256,49 +251,65 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 	_, err := op.spannerClient.ReadWriteTransaction(
 		ctx,
 		func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-			// Next, see if there is still semaphore space.
-			sql := `select count(id) id from ` + op.logTable + ` where id = @id`
-			stmt := spanner.Statement{
-				SQL: sql,
-				Params: map[string]interface{}{
-					"id": fmt.Sprintf(semNamef, name),
-				},
-			}
-
-			iter := txn.Query(ctx, stmt)
-			defer iter.Stop()
-			for {
-				row, err := iter.Next()
-				if err == iterator.Done || err != nil {
-					break
+			getEntriesCount := func() int64 {
+				stmt := spanner.Statement{
+					SQL: `select count(id) id from ` + op.logTable + ` where id = @id`,
+					Params: map[string]interface{}{
+						"id": fmt.Sprintf(semNamef, name),
+					},
 				}
 
 				var cnt int64
-				if err := row.Columns(&cnt); err != nil {
-					break
+				iter := txn.Query(ctx, stmt)
+				defer iter.Stop()
+				for {
+					row, err := iter.Next()
+					if err == iterator.Done || err != nil {
+						break
+					}
+
+					if err := row.Columns(&cnt); err != nil {
+						break
+					}
 				}
 
-				op.logger.Printf("[acquire] cnt=%v, limit=%v", cnt, limit)
-				free = cnt < int64(limit)
+				return cnt
 			}
 
+			// Next, see if there is still semaphore space.
+			free = getEntriesCount() < int64(limit)
 			if !free {
-				return fmt.Errorf("currently full, try again")
+				return fmt.Errorf("semaphore full, try again")
 			}
 
 			// Finally, create the acquire semaphore entry.
-			sql = `
+			sql := `
 insert ` + op.logTable + `
   (key, id, value, leader, timestamp)
 values (
-  '` + fmt.Sprintf("__caller=%v", caller) + `',
+  '` + fmt.Sprintf(semCallerf, caller) + `',
   '` + fmt.Sprintf(semNamef, name) + `',
   '` + caller + `',
   '` + op.hostPort + `',
   PENDING_COMMIT_TIMESTAMP())`
 
 			_, err := txn.Update(ctx, spanner.Statement{SQL: sql})
-			return err
+			if err != nil {
+				return err
+			}
+
+			// Finally, we mark this semaphore as full (once). Will be used in release later.
+			if getEntriesCount() >= int64(limit) {
+				txn.Update(ctx, spanner.Statement{
+					SQL: `update ` + op.logTable + ` set value = @val where key = @name`,
+					Params: map[string]interface{}{
+						"val":  markDel,
+						"name": fmt.Sprintf(semNamef, name),
+					},
+				})
+			}
+
+			return nil
 		},
 	)
 
@@ -310,30 +321,23 @@ values (
 	}
 }
 
-func releaseSemaphore(ctx context.Context, op *Op, name, caller string, limit int) error {
-	_, err := op.spannerClient.ReadWriteTransaction(
-		ctx,
+func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, limit int) error {
+	_, err := op.spannerClient.ReadWriteTransaction(ctx,
 		func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 			// First, attempt to remove the calling entry.
 			sql := `delete from ` + op.logTable + ` where key = @key and id = @id`
-			stmt := spanner.Statement{
+			txn.Update(ctx, spanner.Statement{ // best-effort, could fail
 				SQL: sql,
 				Params: map[string]interface{}{
-					"key": fmt.Sprintf("__caller=%v", caller),
+					"key": fmt.Sprintf(semCallerf, caller),
 					"id":  fmt.Sprintf(semNamef, name),
 				},
-			}
-
-			n, err := txn.Update(ctx, stmt) // best-effort, could fail
-			op.logger.Printf("[delete/acquire] n=%v, err=%v, sql=%v", n, err, sql)
+			})
 
 			// Next, see if there are no more entries.
-			sql = `select count(id) id from ` + op.logTable + ` where id = @id`
-			stmt = spanner.Statement{
-				SQL: sql,
-				Params: map[string]interface{}{
-					"id": fmt.Sprintf(semNamef, name),
-				},
+			stmt := spanner.Statement{
+				SQL:    `select count(id) id from ` + op.logTable + ` where id = @id`,
+				Params: map[string]interface{}{"id": fmt.Sprintf(semNamef, name)},
 			}
 
 			var cnt int64
@@ -348,27 +352,22 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller string, limit in
 				if err := row.Columns(&cnt); err != nil {
 					break
 				}
-
-				op.logger.Printf("[release] cnt=%v, limit=%v", cnt, limit)
 			}
 
 			if cnt != 0 {
 				return nil
 			}
 
-			// Finally, if no more entries, let's remove the actual semaphore entry
-			// so we can reuse this name, perhaps with a different limit.
-			sql = `delete from ` + op.logTable + ` where key = @key`
-			stmt = spanner.Statement{
-				SQL: sql,
-				Params: map[string]interface{}{
-					"key": fmt.Sprintf(semNamef, name),
-				},
+			if value == markDel {
+				// Finally, if no more entries, let's remove the actual semaphore entry
+				// so we can reuse this name, perhaps with a different limit.
+				txn.Update(ctx, spanner.Statement{
+					SQL:    `delete from ` + op.logTable + ` where key = @key`,
+					Params: map[string]interface{}{"key": fmt.Sprintf(semNamef, name)},
+				})
 			}
 
-			n, err = txn.Update(ctx, stmt) // best-effort, could fail
-			op.logger.Printf("[delete/semaphore] n=%v, err=%v, sql=%v", n, err, sql)
-			return err
+			return nil
 		},
 	)
 
