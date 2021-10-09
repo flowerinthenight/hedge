@@ -191,6 +191,34 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 
 			conn.Write([]byte(reply))
 			return
+		case strings.HasPrefix(msg, CmdSemRelease+" "): // release semaphore; we are leader
+			reply := op.buildAckReply(nil)
+			func() {
+				op.mtxSem.Lock()
+				defer op.mtxSem.Unlock()
+				ss := strings.Split(msg, " ")
+				name, caller := ss[1], ss[2]
+				s, err := readSemaphoreEntry(ctx, op, name) // to get the current limit
+				if err != nil {
+					op.logger.Printf("readSemaphoreEntry failed: %v", err)
+					reply = op.buildAckReply(err)
+					return
+				}
+
+				limit, _ := strconv.Atoi(strings.Split(s.Id, "=")[1])
+				err = releaseSemaphore(ctx, op, name, caller, limit)
+				if err != nil {
+					op.logger.Printf("releaseSemaphore failed: %v", err)
+					reply = op.buildAckReply(err)
+					return
+				}
+
+				op.logger.Printf("semaphore released")
+				return
+			}()
+
+			conn.Write([]byte(reply))
+			return
 		default:
 			return // close conn
 		}

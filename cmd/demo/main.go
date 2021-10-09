@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
@@ -106,6 +107,9 @@ func onMessage(app interface{}, data []byte) error {
 		}
 
 		log.Printf("semaphore acquired: %v", ss[1])
+		time.Sleep(time.Second * 1)
+		err = s.Release(ctx)
+		log.Printf("semaphore released, err=%v", err)
 	}
 
 	return nil
