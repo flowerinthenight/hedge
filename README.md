@@ -15,7 +15,7 @@ A `Send()` API is also provided for members to be able to send simple request/re
 
 A `Broadcast()` API is also available for all pods. Note that due to the nature of k8s deployments (pods come and go) and the internal heartbeat delays, some pods might not receive the broadcast message at call time, although all pods will have the complete broadcast target list eventually.
 
-Finally, a distributed semaphore is currently in the works and will be available shortly.
+Finally, a distributed semaphore is also provided through the `NewSemaphore()`, `Acquire()`, and `Release()` APIs.
 
 ## Prerequisites
 * All pods within the group should be able to contact each other via TCP (address:port).
