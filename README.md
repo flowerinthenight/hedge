@@ -38,11 +38,10 @@ CREATE TABLE logtable (
 
 * This library will use the `spindle` table (`logtable` in the example above) for its semaphore-related operations with the following reserved keywords:
 ```
-COLUMN      KEYWORD
-key         __hedge/semaphore/{name}
-key         __caller={ip:port}
-id          __hedge/semaphore/{name}
-id          limit={num}
+column=key, value=__hedge/semaphore/{name}
+column=key, value=__caller={ip:port}
+column=id, value=__hedge/semaphore/{name}
+column=id, value=limit={num}
 ```
 
 ## How to use
