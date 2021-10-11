@@ -169,6 +169,8 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 				defer op.mtxSem.Unlock()
 				ss := strings.Split(msg, " ")
 				name, caller := ss[1], ss[2]
+				go ensureLiveness(ctx, op)
+				op.ensureCh <- name
 				s, err := readSemaphoreEntry(ctx, op, name) // to get the current limit
 				if err != nil {
 					err = fmt.Errorf("0:%v", err) // final

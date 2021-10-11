@@ -143,8 +143,13 @@ type Op struct {
 	members       map[string]struct{} // key=id
 	mtx           sync.Mutex          // local mutex
 	mtxSem        sync.Mutex          // semaphore mutex
-	active        int32               // 1=running, 0=off
-	logger        *log.Logger         // internal logger
+	ensureOn      int32               // 1=semaphore checker running
+	ensureCh      chan string         // please check this id
+	ensureCtx     context.Context
+	ensureCancel  context.CancelFunc
+	ensureDone    chan struct{}
+	active        int32       // 1=running, 0=off
+	logger        *log.Logger // internal logger
 }
 
 // String implements the Stringer interface.
@@ -378,6 +383,12 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	defer atomic.StoreInt32(&op.active, 0)
 
 	<-ctx.Done() // wait for termination
+
+	if atomic.LoadInt32(&op.ensureOn) == 1 {
+		op.ensureCancel() // stop semaphore checker;
+		<-op.ensureDone   // and wait
+	}
+
 	return nil
 }
 
@@ -809,6 +820,8 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		lockName:      lockName,
 		logTable:      logTable,
 		members:       make(map[string]struct{}),
+		ensureCh:      make(chan string),
+		ensureDone:    make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {

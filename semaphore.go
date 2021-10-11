@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -372,4 +374,157 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, l
 	)
 
 	return err
+}
+
+type ensure_t struct {
+	sync.Mutex
+	m map[string]struct{}
+}
+
+func ensureLock() *ensure_t { return &ensure_t{m: make(map[string]struct{})} }
+
+func (e *ensure_t) add(name string) {
+	e.Lock()
+	defer e.Unlock()
+	e.m[name] = struct{}{}
+}
+
+func (e *ensure_t) del(name string) {
+	e.Lock()
+	defer e.Unlock()
+	delete(e.m, name)
+}
+
+func (e *ensure_t) exists(name string) bool {
+	e.Lock()
+	defer e.Unlock()
+	_, ok := e.m[name]
+	return ok
+}
+
+// Triggered during semaphore acquisition; meaning, this is only called when we are leader.
+func ensureLiveness(ctx context.Context, op *Op) {
+	if atomic.LoadInt32(&op.ensureOn) == 1 {
+		return // one checker per leader
+	}
+
+	atomic.StoreInt32(&op.ensureOn, 1)
+	defer atomic.StoreInt32(&op.ensureOn, 0)
+	op.ensureCtx, op.ensureCancel = context.WithCancel(ctx)
+
+	enlock := ensureLock()
+	ensure := func(name string) {
+		enlock.add(name)
+		defer enlock.del(name)
+
+		stmt := spanner.Statement{
+			SQL: `select key from ` + op.logTable + ` where id = @id`,
+			Params: map[string]interface{}{
+				"id": fmt.Sprintf(semNamef, name),
+			},
+		}
+
+		ids := []string{}
+		iter := op.spannerClient.Single().Query(ctx, stmt)
+		defer iter.Stop()
+		for {
+			row, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+
+			if err != nil {
+				op.logger.Printf("[dbg] Next failed: %v", err)
+				break
+			}
+
+			var v LogItem
+			err = row.ToStruct(&v)
+			if err != nil {
+				op.logger.Printf("[dbg] ToStruct failed: %v", err)
+				continue
+			}
+
+			ids = append(ids, v.Key)
+		}
+
+		if len(ids) > 0 {
+			todel := make(chan string, len(ids))
+			var w sync.WaitGroup
+			for _, id := range ids {
+				w.Add(1)
+				go func(t string) {
+					var rmid string
+					defer func(rm *string) {
+						todel <- rmid
+						w.Done()
+					}(&rmid)
+
+					timeout := time.Second * 5
+					caller := strings.Split(t, "=")[1]
+					conn, err := net.DialTimeout("tcp", caller, timeout)
+					if err != nil {
+						op.logger.Printf("[ensure/sem] DialTimeout failed: %v", err)
+						rmid = t // delete this
+						return
+					}
+
+					r, err := op.send(conn, CmdPing+"\n")
+					if err != nil {
+						op.logger.Printf("[ensure/sem] send failed: %v", err)
+						rmid = t // delete this
+						return
+					}
+
+					if r != CmdAck {
+						op.logger.Printf("[ensure/sem] reply failed: %v", r)
+						rmid = t // delete this
+					}
+				}(id)
+			}
+
+			w.Wait()
+			rms := []string{}
+			for range ids {
+				rm := <-todel
+				if rm != "" {
+					rms = append(rms, rm)
+				}
+			}
+
+			if len(rms) > 0 {
+				op.logger.Printf("[ensure/sem] delete: %v", rms)
+				_, err := op.spannerClient.ReadWriteTransaction(ctx,
+					func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+						inrms := strings.Join(rms, "','")
+						sql := `delete from ` + op.logTable + ` where key in ('` + inrms + `')`
+						_, err := txn.Update(ctx, spanner.Statement{SQL: sql})
+						return err
+					},
+				)
+
+				if err != nil {
+					op.logger.Printf("[ensure/sem] cleanup failed %v", err)
+				}
+			}
+
+			time.Sleep(time.Second * 5)
+		}
+	}
+
+	for {
+		var name string
+		select {
+		case <-op.ensureCtx.Done():
+			op.ensureDone <- struct{}{}
+			return
+		case name = <-op.ensureCh:
+		}
+
+		if enlock.exists(name) {
+			continue
+		}
+
+		go ensure(name)
+	}
 }

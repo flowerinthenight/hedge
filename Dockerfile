@@ -1,4 +1,4 @@
-FROM golang:1.17.1-alpine3.14
+FROM golang:1.17.2-alpine3.14
 COPY . /go/src/github.com/flowerinthenight/hedge/
 WORKDIR /go/src/github.com/flowerinthenight/hedge/cmd/demo/
 RUN CGO_ENABLED=0 GOOS=linux go build -v -trimpath -installsuffix cgo -o hedge .
