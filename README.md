@@ -85,7 +85,7 @@ go op.Run(ctx, done)
 // For broadcast, any pod can call op.Broadcast(...) here which will be handled by each
 //   pod's WithBroadcastHandler callback, including the caller.
 // For distributed semaphore, any pod can call the following:
-//   sem := op.NewSemaphore(ctx, "semaphore-name", 2)
+//   sem, _ := op.NewSemaphore(ctx, "semaphore-name", 2)
 //   sem.Acquire(ctx)
 //   ...
 //   sem.Release(ctx)
