@@ -113,8 +113,8 @@ $ gcloud pubsub topics publish hedge-demo-pubctrl --message='send world'
 $ gcloud pubsub topics publish hedge-demo-pubctrl --message='broadcast hello'
 
 # Test the semaphore APIs. If you used the sample deployment yaml, you have 3 running
-# pods. This message will cause two pods to create/acquire the 'testsem' semaphore (with
-# limit 2) while the remaining pod will block until one of the two will release the
-# semaphore after a random timeout.
+# pods. This message will cause two pods to create/acquire the 'testsem' semaphore
+# (with limit 2) while the remaining pod will block until one of the two will release
+# the semaphore after a random timeout.
 $ gcloud pubsub topics publish hedge-demo-pubctrl --message='semaphore testsem 2'
 ```
