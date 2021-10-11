@@ -87,6 +87,7 @@ go op.Run(ctx, done)
 // For distributed semaphore, any pod can call the following:
 //   sem := op.NewSemaphore(ctx, "semaphore-name", 2)
 //   sem.Acquire(ctx)
+//   ...
 //   sem.Release(ctx)
 
 cancel()
