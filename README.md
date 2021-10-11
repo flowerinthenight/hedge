@@ -83,7 +83,7 @@ go op.Run(ctx, done)
 // For distributed locking, any pod can call op.HasLock() here.
 // Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
 // For broadcast, any pod can call op.Broadcast(...) here which will be handled by each
-//   pod's WithBroadcastHandler callback.
+//   pod's WithBroadcastHandler callback, including the caller.
 // For distributed semaphore, any pod can call the following:
 //   sem := op.NewSemaphore(ctx, "semaphore-name", 2)
 //   sem.Acquire(ctx)
