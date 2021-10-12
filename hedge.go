@@ -723,14 +723,12 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 
 		lconn, err := net.DialTimeout("tcp", leader, timeout)
 		if err != nil {
-			op.logger.Printf("[getLeaderConn] DialTimeout failed: %v", err)
 			return nil, err
 		}
 
 		defer lconn.Close()
 		reply, err := op.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
 		if err != nil {
-			op.logger.Printf("[getLeaderConn] send failed: %v", err)
 			return nil, err
 		}
 

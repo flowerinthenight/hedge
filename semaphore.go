@@ -21,6 +21,10 @@ const (
 	markDel    = "delete-on-empty"
 )
 
+var (
+	ErrSemFull = fmt.Errorf("hedge/semaphore: semaphore full")
+)
+
 // Semaphore represents a distributed semaphore object.
 type Semaphore struct {
 	name  string
@@ -29,11 +33,16 @@ type Semaphore struct {
 }
 
 // Acquire acquires a semaphore. This call will block until the semaphore is acquired.
-// By default, this call will basically block forever until the semaphore is acquired.
-// To simulate a 'TryAcquire'-like call, you can put a timeout to (or cancel) 'ctx'.
-// At least with this, you only block the call until either you get the semaphore or
-// 'ctx' expires or is cancelled.
-func (s *Semaphore) Acquire(ctx context.Context) error {
+// By default, this call will basically block forever until the semaphore is acquired
+// or until 'ctx' expires or is cancelled.
+func (s *Semaphore) Acquire(ctx context.Context) error { return s.acquire(ctx, false) }
+
+// TryAcquire is like Acquire() but will not block until the semaphore is acquired.
+// It will only attempt to acquire the semaphore and will return immediately on either
+// success or failure, or until 'ctx' expires or is cancelled.
+func (s *Semaphore) TryAcquire(ctx context.Context) error { return s.acquire(ctx, true) }
+
+func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 	subctx := context.WithValue(ctx, struct{}{}, nil)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
@@ -110,10 +119,14 @@ func (s *Semaphore) Acquire(ctx context.Context) error {
 		case ret.err == nil:
 			return nil
 		default:
-			if ret.retry {
-				continue
-			} else {
+			if noretry {
 				return ret.err
+			} else {
+				if ret.retry {
+					continue
+				} else {
+					return ret.err
+				}
 			}
 		}
 	}
@@ -281,7 +294,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 			// Next, see if there is still semaphore space.
 			free = getEntriesCount() < int64(limit)
 			if !free {
-				return fmt.Errorf("semaphore full, try again")
+				return ErrSemFull
 			}
 
 			// Finally, create the acquire semaphore entry.
