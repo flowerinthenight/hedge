@@ -31,15 +31,25 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 		case strings.HasPrefix(msg, CmdWrite+" "): // actual write
 			reply := op.buildAckReply(nil)
 			if hl, _ := op.HasLock(); hl {
-				payload := strings.Split(msg, " ")[1]
+				ss := strings.Split(msg, " ")
+				payload := ss[1]
+				var noappend bool
+				if len(ss) >= 3 {
+					if ss[2] == FlagNoAppend {
+						noappend = true
+					}
+				}
+
 				decoded, _ := base64.StdEncoding.DecodeString(payload)
 				var kv KeyValue
 				err = json.Unmarshal(decoded, &kv)
 				if err != nil {
 					reply = op.buildAckReply(err)
 				} else {
-					err = op.Put(ctx, kv, true)
-					reply = op.buildAckReply(err)
+					reply = op.buildAckReply(op.Put(ctx, kv, PutOptions{
+						DirectWrite: true,
+						NoAppend:    noappend,
+					}))
 				}
 			} else {
 				reply = "\n" // not leader, possible even if previously confirmed

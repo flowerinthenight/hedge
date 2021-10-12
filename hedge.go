@@ -22,8 +22,8 @@ import (
 
 const (
 	CmdLeader     = "LDR" // for leader confirmation, reply="ACK"
-	CmdWrite      = "PUT" // write key/value, fmt="PUT base64(payload)"
-	CmdSend       = "SND" // member to leader, fmt="SND base64(payload)"
+	CmdWrite      = "PUT" // write key/value, fmt="PUT <base64(payload)> [noappend]"
+	CmdSend       = "SND" // member to leader, fmt="SND <base64(payload)>"
 	CmdPing       = "HEY" // heartbeat to indicate availability, fmt="HEY [id]"
 	CmdMembers    = "MEM" // members info from leader to all, fmt="MEM base64(JSON(members))"
 	CmdBroadcast  = "ALL" // broadcast to all, fmt="ALL base64(payload)"
@@ -31,6 +31,8 @@ const (
 	CmdSemaphore  = "SEM" // create semaphore, fmt="SEM {name} {limit} {caller}, reply="ACK"
 	CmdSemAcquire = "SEA" // acquire semaphore, fmt="SEA {name} {caller}", reply="ACK[ base64([0:|1:]err)]" (0=final,1=retry)
 	CmdSemRelease = "SER" // release semaphore, fmt="SER {name} {caller}"
+
+	FlagNoAppend = "noappend"
 )
 
 var (
@@ -499,28 +501,44 @@ order by timestamp limit 1`
 	return ret, nil
 }
 
+type PutOptions struct {
+	// If true, do a direct write, no need to fwd to leader.
+	DirectWrite bool
+
+	// If true, don't do an append-write; overwrite the latest. Note that even if you set this
+	// to true, if you do another Put the next time with this field set as false (default),
+	// the previous write will now be gone, or will now be part of the history.
+	NoAppend bool
+}
+
 // Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
 // timeout, to wait for the leader's availability to do actual writes before returning.
-func (op *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
+func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 	defer func(begin time.Time) {
 		op.logger.Printf("[Put] duration=%v", time.Since(begin))
 	}(time.Now())
 
 	var err error
-	var tmpdirect, hl bool
-	if len(direct) > 0 {
-		tmpdirect = direct[0]
+	var direct, noappend, hl bool
+	if len(po) > 0 {
+		direct = po[0].DirectWrite
+		noappend = po[0].NoAppend
 	} else {
 		hl, _ = op.HasLock()
 	}
 
-	if tmpdirect || hl {
+	id := uuid.NewString()
+	if noappend {
+		id = "-"
+	}
+
+	if direct || hl {
 		b, _ := json.Marshal(kv)
 		op.logger.Printf("[Put] leader: direct write: %v", string(b))
 		_, err := op.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(op.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
-				[]interface{}{uuid.NewString(), kv.Key, kv.Value, op.hostPort, spanner.CommitTimestamp},
+				[]interface{}{id, kv.Key, kv.Value, op.hostPort, spanner.CommitTimestamp},
 			),
 		})
 
@@ -540,7 +558,12 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, direct ...bool) error {
 
 	b, _ := json.Marshal(kv)
 	enc := base64.StdEncoding.EncodeToString(b)
-	reply, err := op.send(conn, fmt.Sprintf("%v %v\n", CmdWrite, enc))
+	msg := fmt.Sprintf("%v %v\n", CmdWrite, enc)
+	if noappend {
+		msg = fmt.Sprintf("%v %v %v\n", CmdWrite, enc, FlagNoAppend)
+	}
+
+	reply, err := op.send(conn, msg)
 	if err != nil {
 		op.logger.Printf("[Put] send failed: %v", err)
 		return err
