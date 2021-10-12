@@ -140,7 +140,7 @@ func main() {
 						return
 					}
 
-					err = s.TryAcquire(context.Background())
+					err = s.Acquire(context.Background())
 					if err != nil {
 						log.Println("Acquire failed:", err)
 						return
