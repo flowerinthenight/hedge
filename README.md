@@ -1,7 +1,7 @@
 [![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
 
 ## hedge
-A library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes deployments. Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through `spindle`, a simple member-to-leader communication channel, a broadcast (send-to-all) mechanism, and a distributed semaphore. It also works even on single-pod deployments; that pod will always be the leader.
+A library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes deployments. Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through `spindle`, a simple member-to-leader communication channel, a broadcast (send-to-all) mechanism, and a distributed semaphore. It also works even on single-pod deployments.
 
 See [here](https://pkg.go.dev/github.com/flowerinthenight/hedge) for the documentation.
 
