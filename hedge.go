@@ -276,20 +276,17 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 					timeout := time.Second * 5
 					conn, err := net.DialTimeout("tcp", id, timeout)
 					if err != nil {
-						op.logger.Printf("DialTimeout failed: %v", err)
 						rmid = id // delete this
 						return
 					}
 
 					r, err := op.send(conn, CmdPing+"\n")
 					if err != nil {
-						op.logger.Printf("[leader] send failed: %v", err)
 						rmid = id // delete this
 						return
 					}
 
 					if r != CmdAck {
-						op.logger.Printf("[leader] reply failed: %v", r)
 						rmid = id // delete this
 					}
 				}(k)
@@ -312,16 +309,12 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 					timeout := time.Second * 5
 					conn, err := net.DialTimeout("tcp", id, timeout)
 					if err != nil {
-						op.logger.Printf("[leader] DialTimeout failed: %v", err)
 						return
 					}
 
 					defer conn.Close()
 					msg := fmt.Sprintf("%v %v\n", CmdMembers, op.encodeMembers())
-					_, err = op.send(conn, msg)
-					if err != nil {
-						op.logger.Printf("[leader] send failed: %v", err)
-					}
+					op.send(conn, msg)
 				}(k)
 			}
 
@@ -334,7 +327,6 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			defer atomic.StoreInt32(&hbactive, 0)
 			lconn, err := op.getLeaderConn(ctx)
 			if err != nil {
-				op.logger.Printf("getLeaderConn failed: %v", err)
 				return
 			}
 
@@ -342,7 +334,6 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			msg := fmt.Sprintf("%v %v\n", CmdPing, op.hostPort)
 			r, err := op.send(lconn, msg)
 			if err != nil {
-				op.logger.Printf("send failed: %v", err)
 				return
 			}
 
