@@ -15,7 +15,6 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 	for {
 		msg, err := op.recv(conn)
 		if err != nil {
-			op.logger.Printf("recv failed: %v", err)
 			return
 		}
 

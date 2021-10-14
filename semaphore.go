@@ -64,7 +64,6 @@ func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 
 		reply, err := s.op.send(conn, msg)
 		if err != nil {
-			s.op.logger.Printf("send failed: %v", err)
 			return false, err
 		}
 
@@ -85,7 +84,7 @@ func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 				}
 			}
 		default:
-			return false, fmt.Errorf("unknown reply")
+			return false, ErrNotSupported
 		}
 
 		return false, nil
@@ -150,7 +149,6 @@ func (s *Semaphore) Release(ctx context.Context) error {
 
 	reply, err := s.op.send(conn, msg)
 	if err != nil {
-		s.op.logger.Printf("send failed: %v", err)
 		return err
 	}
 
@@ -447,14 +445,12 @@ func ensureLiveness(ctx context.Context, op *Op) {
 			}
 
 			if err != nil {
-				op.logger.Printf("[dbg] Next failed: %v", err)
 				break
 			}
 
 			var v LogItem
 			err = row.ToStruct(&v)
 			if err != nil {
-				op.logger.Printf("[dbg] ToStruct failed: %v", err)
 				continue
 			}
 
@@ -477,20 +473,17 @@ func ensureLiveness(ctx context.Context, op *Op) {
 					caller := strings.Split(t, "=")[1]
 					conn, err := net.DialTimeout("tcp", caller, timeout)
 					if err != nil {
-						op.logger.Printf("[ensure/sem] DialTimeout failed: %v", err)
 						rmid = t // delete this
 						return
 					}
 
 					r, err := op.send(conn, CmdPing+"\n")
 					if err != nil {
-						op.logger.Printf("[ensure/sem] send failed: %v", err)
 						rmid = t // delete this
 						return
 					}
 
 					if r != CmdAck {
-						op.logger.Printf("[ensure/sem] reply failed: %v", r)
 						rmid = t // delete this
 					}
 				}(id)
@@ -507,7 +500,7 @@ func ensureLiveness(ctx context.Context, op *Op) {
 
 			if len(rms) > 0 {
 				op.logger.Printf("[ensure/sem] delete: %v", rms)
-				_, err := op.spannerClient.ReadWriteTransaction(ctx,
+				op.spannerClient.ReadWriteTransaction(ctx,
 					func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 						inrms := strings.Join(rms, "','")
 						sql := `delete from ` + op.logTable + ` where key in ('` + inrms + `')`
@@ -515,10 +508,6 @@ func ensureLiveness(ctx context.Context, op *Op) {
 						return err
 					},
 				)
-
-				if err != nil {
-					op.logger.Printf("[ensure/sem] cleanup failed %v", err)
-				}
 			}
 
 			time.Sleep(time.Second * 5)

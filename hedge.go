@@ -36,9 +36,10 @@ const (
 )
 
 var (
-	ErrNotRunning = fmt.Errorf("hedge: not running")
-	ErrNoLeader   = fmt.Errorf("hedge: no leader available")
-	ErrNoHandler  = fmt.Errorf("hedge: no message handler")
+	ErrNotRunning   = fmt.Errorf("hedge: not running")
+	ErrNoLeader     = fmt.Errorf("hedge: no leader available")
+	ErrNoHandler    = fmt.Errorf("hedge: no message handler")
+	ErrNotSupported = fmt.Errorf("hedge: not supported")
 )
 
 type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
@@ -200,13 +201,11 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	// Setup our server for leader communication.
 	addr, err := net.ResolveTCPAddr("tcp4", op.hostPort)
 	if err != nil {
-		op.logger.Printf("ResolveTCPAddr failed: %v", err)
 		return err
 	}
 
 	listener, err := net.ListenTCP("tcp", addr)
 	if err != nil {
-		op.logger.Printf("ListenTCP failed: %v", err)
 		return err
 	}
 
@@ -409,7 +408,6 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 
 	reply, err := op.send(conn, msg)
 	if err != nil {
-		op.logger.Printf("send failed: %v", err)
 		return nil, err
 	}
 
@@ -421,7 +419,7 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 			return nil, fmt.Errorf(string(dec))
 		}
 	default:
-		return nil, fmt.Errorf("unknown reply")
+		return nil, ErrNotSupported
 	}
 
 	return &Semaphore{name, limit, op}, nil
@@ -556,7 +554,6 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 
 	reply, err := op.send(conn, msg)
 	if err != nil {
-		op.logger.Printf("[Put] send failed: %v", err)
 		return err
 	}
 
@@ -594,7 +591,6 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	enc := base64.StdEncoding.EncodeToString(msg)
 	reply, err := op.send(conn, fmt.Sprintf("%v %v\n", CmdSend, enc))
 	if err != nil {
-		op.logger.Printf("[Send] send failed: %v", err)
 		return nil, err
 	}
 
@@ -643,7 +639,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 			timeout := time.Second * 5
 			conn, err := net.DialTimeout("tcp", id, timeout)
 			if err != nil {
-				err = fmt.Errorf("DialTimeout failed: %v", err)
 				outch <- BroadcastOutput{Id: id, Error: err}
 				return
 			}
@@ -652,7 +647,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 			enc := base64.StdEncoding.EncodeToString(msg)
 			reply, err := op.send(conn, fmt.Sprintf("%v %v\n", CmdBroadcast, enc))
 			if err != nil {
-				err = fmt.Errorf("send failed: %v", err)
 				outch <- BroadcastOutput{Id: id, Error: err}
 				return
 			}
@@ -684,7 +678,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 func (op *Op) send(conn net.Conn, msg string) (string, error) {
 	_, err := conn.Write([]byte(msg))
 	if err != nil {
-		op.logger.Printf("Write failed: %v", err)
 		return "", err
 	}
 
@@ -694,7 +687,6 @@ func (op *Op) send(conn net.Conn, msg string) (string, error) {
 func (op *Op) recv(conn net.Conn) (string, error) {
 	buffer, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		op.logger.Printf("ReadString failed: %v", err)
 		return "", err
 	}
 
