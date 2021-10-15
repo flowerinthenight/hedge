@@ -440,10 +440,6 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 // limit = -2 --> oldest version only
 // limit > 0 --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
-	defer func(begin time.Time) {
-		op.logger.Printf("[Get] duration=%v", time.Since(begin))
-	}(time.Now())
-
 	ret := []KeyValue{}
 	query := `select key, value, timestamp
 from ` + op.logTable + `
@@ -512,10 +508,6 @@ type PutOptions struct {
 // Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
 // timeout, to wait for the leader's availability to do actual writes before returning.
 func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
-	defer func(begin time.Time) {
-		op.logger.Printf("[Put] duration=%v", time.Since(begin))
-	}(time.Now())
-
 	var err error
 	var direct, noappend, hl bool
 	if len(po) > 0 {
@@ -584,10 +576,6 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 // including the leader itself (send to self). It also blocks until it
 // receives the reply from the leader's message handler.
 func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
-	defer func(begin time.Time) {
-		op.logger.Printf("[Send] duration=%v", time.Since(begin))
-	}(time.Now())
-
 	conn, err := op.getLeaderConn(ctx)
 	if err != nil {
 		return nil, err
@@ -632,10 +620,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 	if atomic.LoadInt32(&op.active) != 1 || op.fnBroadcast == nil {
 		return nil // not running or no broadcast support
 	}
-
-	defer func(begin time.Time) {
-		op.logger.Printf("[Broadcast] duration=%v", time.Since(begin))
-	}(time.Now())
 
 	outs := []BroadcastOutput{}
 	var w sync.WaitGroup
