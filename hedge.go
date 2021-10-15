@@ -256,10 +256,6 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	go func() {
 		var active int32
 		ensureMembers := func() {
-			defer func(begin time.Time) {
-				op.logger.Printf("fn=ensureMembers, duration=%v", time.Since(begin))
-			}(time.Now())
-
 			atomic.StoreInt32(&active, 1)
 			defer atomic.StoreInt32(&active, 0)
 			ch := make(chan *string)
