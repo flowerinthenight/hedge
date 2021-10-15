@@ -256,44 +256,57 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	go func() {
 		var active int32
 		ensureMembers := func() {
+			defer func(begin time.Time) {
+				op.logger.Printf("fn=ensureMembers, duration=%v", time.Since(begin))
+			}(time.Now())
+
 			atomic.StoreInt32(&active, 1)
 			defer atomic.StoreInt32(&active, 0)
+			ch := make(chan *string)
+			emdone := make(chan struct{}, 1)
+			todel := []string{}
+			go func() {
+				for {
+					m := <-ch
+					switch {
+					case m == nil:
+						emdone <- struct{}{}
+						return
+					default:
+						todel = append(todel, *m)
+					}
+				}
+			}()
+
 			var w sync.WaitGroup
 			allm := op.getMembers()
-			todel := make(chan string, len(allm))
-
-			// Make sure each member is online.
 			for k := range allm {
 				w.Add(1)
 				go func(id string) {
-					var rmid string
-					defer func(rm *string) {
-						todel <- rmid
-						w.Done()
-					}(&rmid)
-
+					defer func() { w.Done() }()
 					timeout := time.Second * 5
 					conn, err := net.DialTimeout("tcp", id, timeout)
 					if err != nil {
-						rmid = id // delete this
+						ch <- &id // delete this
 						return
 					}
 
 					r, err := op.send(conn, CmdPing+"\n")
 					if err != nil {
-						rmid = id // delete this
+						ch <- &id // delete this
 						return
 					}
 
 					if r != CmdAck {
-						rmid = id // delete this
+						ch <- &id // delete this
 					}
 				}(k)
 			}
 
 			w.Wait()
-			for range allm {
-				rm := <-todel
+			ch <- nil // close;
+			<-emdone  // and wait
+			for _, rm := range todel {
 				if rm != "" {
 					op.logger.Printf("[leader] delete %v", rm)
 					op.delMember(rm)
