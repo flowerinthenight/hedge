@@ -198,7 +198,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		}
 	}
 
-	// Setup our server for leader communication.
+	// Setup our server for our internal protocol.
 	addr, err := net.ResolveTCPAddr("tcp4", op.hostPort)
 	if err != nil {
 		return err
