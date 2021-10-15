@@ -231,6 +231,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName),
 		spindle.WithDuration(op.lockTimeout),
 		spindle.WithId(op.hostPort),
+		spindle.WithLogger(op.logger),
 	)
 
 	spindleDone := make(chan error, 1)
