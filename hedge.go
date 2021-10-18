@@ -168,7 +168,7 @@ func (op *Op) String() string {
 // HostPort returns the host:port (or name) of this instance.
 func (op *Op) HostPort() string { return op.hostPort }
 
-// Name is the same as hostPort.
+// Name is the same as HostPort.
 func (op *Op) Name() string { return op.hostPort }
 
 // Run starts the main handler. It blocks until 'ctx' is cancelled,
