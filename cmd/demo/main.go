@@ -146,10 +146,10 @@ func main() {
 						return
 					}
 
-					log.Printf("semaphore acquired! simulate work for %vs, id=%v", tm, op.HostPost())
+					log.Printf("semaphore acquired! simulate work for %vs, id=%v", tm, op.HostPort())
 					time.Sleep(time.Second * time.Duration(tm))
 
-					log.Printf("release semaphore, id=%v", op.HostPost())
+					log.Printf("release semaphore, id=%v", op.HostPort())
 					s.Release(context.Background())
 				}()
 
