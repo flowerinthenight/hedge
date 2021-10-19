@@ -439,10 +439,10 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 }
 
 // Get reads a key (or keys) from Op.
-// limit = 0 --> (default) latest only
-// limit = -1 --> all (latest to oldest, [0]=latest)
-// limit = -2 --> oldest version only
-// limit > 0 --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
+//  limit = 0  --> (default) latest only
+//  limit = -1 --> all (latest to oldest, [0]=latest)
+//  limit = -2 --> oldest version only
+//  limit > 0  --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
 	ret := []KeyValue{}
 	query := `select key, value, timestamp
