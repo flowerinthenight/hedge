@@ -14,7 +14,7 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 	defer conn.Close()
 	for {
 		msg, err := op.recv(conn)
-		if err != nil {
+		if err != nil || ctx.Err() != nil {
 			return
 		}
 

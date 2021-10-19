@@ -223,6 +223,11 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				return
 			}
 
+			if ctx.Err() != nil {
+				op.logger.Printf("cancelled: %v", ctx.Err())
+				return
+			}
+
 			go handleConn(ctx, op, conn)
 		}
 	}()
@@ -688,7 +693,11 @@ func (op *Op) recv(conn net.Conn) (string, error) {
 		return "", err
 	}
 
-	reply := buffer[:len(buffer)-1]
+	var reply string
+	if buffer != "" {
+		reply = buffer[:len(buffer)-1]
+	}
+
 	return reply, nil
 }
 
