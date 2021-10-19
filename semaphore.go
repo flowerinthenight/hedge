@@ -34,12 +34,12 @@ type Semaphore struct {
 
 // Acquire acquires a semaphore. This call will block until the semaphore is acquired.
 // By default, this call will basically block forever until the semaphore is acquired
-// or until 'ctx' expires or is cancelled.
+// or until ctx expires or is cancelled.
 func (s *Semaphore) Acquire(ctx context.Context) error { return s.acquire(ctx, false) }
 
 // TryAcquire is like Acquire() but will not block until the semaphore is acquired.
 // It will only attempt to acquire the semaphore and will return immediately on either
-// success or failure, or until 'ctx' expires or is cancelled.
+// success or failure, or until ctx expires or is cancelled.
 func (s *Semaphore) TryAcquire(ctx context.Context) error { return s.acquire(ctx, true) }
 
 func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
@@ -164,8 +164,9 @@ func (s *Semaphore) Release(ctx context.Context) error {
 	return nil
 }
 
-// We will use the current 'logTable' as our semaphore storage.
-// Naming: key="hedge/semaphore/{name}", id="limit={v}", value={caller}
+// We will use the current logTable as our semaphore storage.
+// Naming convention(s):
+//  key="hedge/semaphore/{name}", id="limit={v}", value={caller}
 func createSemaphoreEntry(ctx context.Context, op *Op, name, caller string, limit int) error {
 	_, err := op.spannerClient.ReadWriteTransaction(ctx,
 		func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
