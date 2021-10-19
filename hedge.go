@@ -84,17 +84,17 @@ func (w withLeaderHandler) Apply(op *Op) {
 
 // WithLeaderHandler sets the node's callback function when it is the current
 // leader and when members send messages to it using the Send(...) API. Any
-// arbitrary data represented by 'd' will be passed to the callback 'h' every
-// time it is called. If 'd' is nil, the default callback data will be the *Op
+// arbitrary data represented by d will be passed to the callback h every
+// time it is called. If d is nil, the default callback data will be the *Op
 // object itself. The handler's returning []byte will serve as reply.
 //
 // Typical flow would be:
-// 1) Any node (including the leader) calls the Send(...) API.
-// 2) The current leader handles the call by reading the input.
-// 3) Leader will then call FnLeaderHandler, passing the arbitrary data
-//    along with the message.
-// 4) FnLeaderHandler will process the data as leader, then returns the
-//    reply to the calling member.
+//  1) Any node (including the leader) calls the Send(...) API.
+//  2) The current leader handles the call by reading the input.
+//  3) Leader will then call FnLeaderHandler, passing the arbitrary data
+//     along with the message.
+//  4) FnLeaderHandler will process the data as leader, then returns the
+//     reply to the calling member.
 func WithLeaderHandler(d interface{}, h FnMsgHandler) Option {
 	return withLeaderHandler{d, h}
 }
@@ -111,8 +111,8 @@ func (w withBroadcastHandler) Apply(op *Op) {
 
 // WithBroadcastHandler sets the node's callback function for broadcast messages
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
-// represented by 'd' will be passed to the callback 'h' every time it is called.
-// If 'd' is nil, the default callback data will be the *Op object itself. The
+// represented by d will be passed to the callback h every time it is called.
+// If d is nil, the default callback data will be the *Op object itself. The
 // handler's returning []byte will serve as reply.
 //
 // A nil broadcast handler disables the internal heartbeat function.
@@ -124,8 +124,8 @@ type withLogger struct{ l *log.Logger }
 
 func (w withLogger) Apply(op *Op) { op.logger = w.l }
 
-// WithLogger sets Op's logger object. Can be silenced by setting
-// v to `log.New(ioutil.Discard, "", 0)`.
+// WithLogger sets Op's logger object. Can be silenced by setting v to:
+//  log.New(ioutil.Discard, "", 0)
 func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
 // Op is our main instance for hedge operations.
@@ -171,8 +171,8 @@ func (op *Op) HostPort() string { return op.hostPort }
 // Name is the same as HostPort.
 func (op *Op) Name() string { return op.hostPort }
 
-// Run starts the main handler. It blocks until 'ctx' is cancelled,
-// optionally sending an error message to 'done' when finished.
+// Run starts the main handler. It blocks until ctx is cancelled,
+// optionally sending an error message to done when finished.
 func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	var err error
 	defer func(e *error) {
@@ -439,7 +439,7 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 }
 
 // Get reads a key (or keys) from Op.
-// The values of 'limit' are:
+// The values of limit are:
 //  limit = 0  --> (default) latest only
 //  limit = -1 --> all (latest to oldest, [0]=latest)
 //  limit = -2 --> oldest version only
@@ -577,9 +577,9 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 	return nil
 }
 
-// Send sends 'msg' to the current leader. Any node can send messages,
-// including the leader itself (send to self). It also blocks until it
-// receives the reply from the leader's message handler.
+// Send sends msg to the current leader. Any node can send messages,
+// including the leader itself (send to self). It also blocks until
+// it receives the reply from the leader's message handler.
 func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	conn, err := op.getLeaderConn(ctx)
 	if err != nil {
@@ -614,7 +614,7 @@ type BroadcastOutput struct {
 	Error error
 }
 
-// Broadcast sends 'msg' to all nodes (send to all). Any node can broadcast
+// Broadcast sends msg to all nodes (send to all). Any node can broadcast
 // messages, including the leader itself. Note that this is best-effort
 // basis only; by the time you call this API, the handler might not have
 // all the active members in record yet, as is the usual situation with
@@ -811,8 +811,8 @@ func (op *Op) delMember(id string) {
 	delete(op.members, id)
 }
 
-// New creates an instance of Op. 'hostPort' should be in ip:port format. The internal spindle object
-// lock table will be 'lockTable'; lock name will be 'lockName'. And 'logTable' will serve as our
+// New creates an instance of Op. hostPort should be in ip:port format. The internal spindle object's
+// lock table name will be lockTable, and lockName is the lock name. logTable will serve as our
 // append-only, distributed key/value storage table.
 func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string, opts ...Option) *Op {
 	op := &Op{
