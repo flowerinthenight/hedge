@@ -439,6 +439,7 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 }
 
 // Get reads a key (or keys) from Op.
+//
 //  limit = 0  --> (default) latest only
 //  limit = -1 --> all (latest to oldest, [0]=latest)
 //  limit = -2 --> oldest version only
