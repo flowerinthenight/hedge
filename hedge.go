@@ -836,6 +836,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		members:       make(map[string]struct{}),
 		ensureCh:      make(chan string),
 		ensureDone:    make(chan struct{}, 1),
+		Lock:          &spindle.Lock{}, // init later
 	}
 
 	for _, opt := range opts {

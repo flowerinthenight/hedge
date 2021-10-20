@@ -5,8 +5,9 @@ go 1.17
 require (
 	cloud.google.com/go/spanner v1.27.0
 	github.com/flowerinthenight/longsub v1.2.2
-	github.com/flowerinthenight/spindle v1.0.18
+	github.com/flowerinthenight/spindle v1.0.19
 	github.com/google/uuid v1.3.0
+	github.com/googleapis/gax-go/v2 v2.1.1
 	google.golang.org/api v0.58.0
 )
 
@@ -18,7 +19,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/go-cmp v0.5.6 // indirect
-	github.com/googleapis/gax-go/v2 v2.1.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	go.opencensus.io v0.23.0 // indirect

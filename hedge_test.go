@@ -41,12 +41,7 @@ func TestBasic(t *testing.T) {
 
 	done := make(chan error, 1)
 	quit, cancel := context.WithCancel(ctx)
-	go func() {
-		err := op.Run(quit, done)
-		if err != nil {
-			t.Error(err)
-		}
-	}()
+	go op.Run(quit, done)
 
 	var cnt int
 	bo := gaxv2.Backoff{
@@ -57,19 +52,19 @@ func TestBasic(t *testing.T) {
 
 	for {
 		cnt++
-		on := op.IsRunning()
+		locked, _ := op.HasLock()
 		switch {
-		case on:
-			t.Log("running")
+		case locked:
+			t.Log("got lock")
 			break
 		default:
-			t.Log("not running, retry")
+			t.Log("didn't get lock, retry")
 			time.Sleep(bo.Pause())
 			continue
 		}
 
 		if cnt >= 10 {
-			t.Fatalf("can't run")
+			t.Fatalf("can't get lock")
 		}
 
 		break
