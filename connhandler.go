@@ -127,7 +127,15 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 			json.Unmarshal(decoded, &m)
 			m[op.hostPort] = struct{}{} // just to be sure
 			op.setMembers(m)            // then replace my records
-			op.logger.Printf("members=%v", len(op.getMembers()))
+			members := op.getMembers()
+			mlist := []string{}
+			for k := range members {
+				mlist = append(mlist, k)
+			}
+
+			op.logger.Printf("members=%v, list=%v",
+				len(op.getMembers()), strings.Join(mlist, ","))
+
 			reply := op.buildAckReply(nil)
 			conn.Write([]byte(reply))
 			return
