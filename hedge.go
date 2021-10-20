@@ -171,6 +171,9 @@ func (op *Op) HostPort() string { return op.hostPort }
 // Name is the same as HostPort.
 func (op *Op) Name() string { return op.hostPort }
 
+// IsRunning returns true if Op is already running.
+func (op *Op) IsRunning() bool { return atomic.LoadInt32(&op.active) == 1 }
+
 // Run starts the main handler. It blocks until ctx is cancelled,
 // optionally sending an error message to done when finished.
 func (op *Op) Run(ctx context.Context, done ...chan error) error {

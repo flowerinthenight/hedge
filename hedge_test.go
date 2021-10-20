@@ -57,19 +57,19 @@ func TestBasic(t *testing.T) {
 
 	for {
 		cnt++
-		locked, token := op.HasLock()
+		on := op.IsRunning()
 		switch {
-		case locked:
-			t.Logf("lock obtained, token=%v", token)
+		case on:
+			t.Log("running")
 			break
 		default:
-			t.Log("lock not obtained, retry")
+			t.Log("not running, retry")
 			time.Sleep(bo.Pause())
 			continue
 		}
 
 		if cnt >= 10 {
-			t.Fatalf("can't get lock")
+			t.Fatalf("can't run")
 		}
 
 		break
