@@ -41,7 +41,12 @@ func TestBasic(t *testing.T) {
 
 	done := make(chan error, 1)
 	quit, cancel := context.WithCancel(ctx)
-	go op.Run(quit, done)
+	go func() {
+		err := op.Run(quit, done)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
 
 	var cnt int
 	bo := gaxv2.Backoff{
