@@ -10,6 +10,14 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+
+    services:
+      emulator:
+        image: gcr.io/cloud-spanner-emulator/emulator
+        ports:
+        - 9010:9010
+        - 9020:9020
+
     steps:
     - uses: actions/checkout@v2
 
@@ -18,8 +26,17 @@ jobs:
       with:
         go-version: 1.17
 
-    - name: Build
-      run: go build -v ./...
-
-    - name: Test
-      run: go test -v ./...
+    - name: Test using emulator
+      run: |
+        curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-361.0.0-linux-x86_64.tar.gz
+        tar xvzf google-cloud-sdk-361.0.0-linux-x86_64.tar.gz
+        ./google-cloud-sdk/install.sh --quiet
+        gcloud config configurations create emulator
+        gcloud config set auth/disable_credentials true
+        gcloud config set project test-project
+        gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
+        gcloud spanner instances create test-instance --config=emulator-config --description="Test Instance" --nodes=1
+        export SPANNER_EMULATOR_HOST=localhost:9010
+        gcloud spanner databases create testdb --instance=test-instance \
+          --ddl='CREATE TABLE locktable (name STRING(MAX) NOT NULL, heartbeat TIMESTAMP OPTIONS (allow_commit_timestamp=true), token TIMESTAMP OPTIONS (allow_commit_timestamp=true), writer STRING(MAX)) PRIMARY KEY (name); CREATE TABLE logtable (id STRING(MAX), key STRING(MAX), value STRING(MAX), leader STRING(MAX), timestamp TIMESTAMP OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (key, id);'
+        go test -v ./...
