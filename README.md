@@ -1,9 +1,8 @@
 [![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/flowerinthenight/hedge.svg)](https://pkg.go.dev/github.com/flowerinthenight/hedge)
 
 ## hedge
 A library built on top of [`spindle`](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes deployments. Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through `spindle`, a simple member-to-leader communication channel, a broadcast (send-to-all) mechanism, and a distributed semaphore. It also works even on single-pod deployments.
-
-See [here](https://pkg.go.dev/github.com/flowerinthenight/hedge) for the documentation.
 
 ## Why?
 In a nutshell, I wanted something much simpler than using [Raft](https://raft.github.io/) (my [progress](https://github.com/flowerinthenight/testqrm) on that front is quite slow), or worse, [Paxos](https://en.wikipedia.org/wiki/Paxos_(computer_science)) (Raft maybe as the long-term goal). And I wanted an easily-accessible storage that is a bit decoupled from the code (easier to query, edit, debug, backup, etc). We are already a heavy Spanner user, and `spindle` has been in our production for quite a while now: these two should be able to do it, preferably on a k8s Deployment; StatefulSets or DaemonSets shouldn't be a requirement. Since then, additional features have been added, such as the `Send()` API.
