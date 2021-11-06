@@ -40,6 +40,7 @@ var (
 	ErrNoLeader     = fmt.Errorf("hedge: no leader available")
 	ErrNoHandler    = fmt.Errorf("hedge: no message handler")
 	ErrNotSupported = fmt.Errorf("hedge: not supported")
+	ErrInvalidConn  = fmt.Errorf("hedge: invalid connection")
 )
 
 type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
@@ -682,6 +683,10 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 }
 
 func (op *Op) send(conn net.Conn, msg string) (string, error) {
+	if conn == nil {
+		return "", ErrInvalidConn
+	}
+
 	_, err := conn.Write([]byte(msg))
 	if err != nil {
 		return "", err
@@ -691,6 +696,10 @@ func (op *Op) send(conn net.Conn, msg string) (string, error) {
 }
 
 func (op *Op) recv(conn net.Conn) (string, error) {
+	if conn == nil {
+		return "", ErrInvalidConn
+	}
+
 	buffer, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return "", err
