@@ -351,7 +351,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				return
 			}
 
-			defer lconn.Close()
+			if lconn != nil {
+				defer lconn.Close()
+			}
+
 			msg := fmt.Sprintf("%v %v\n", CmdPing, op.hostPort)
 			r, err := op.send(lconn, msg)
 			if err != nil {
