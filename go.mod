@@ -5,7 +5,7 @@ go 1.17
 require (
 	cloud.google.com/go/spanner v1.42.0
 	github.com/flowerinthenight/longsub v1.3.0
-	github.com/flowerinthenight/spindle v1.1.1
+	github.com/flowerinthenight/spindle v1.1.2
 	github.com/google/uuid v1.3.0
 	github.com/googleapis/gax-go/v2 v2.7.0
 	google.golang.org/api v0.106.0
