@@ -80,7 +80,7 @@ go op.Run(ctx, done)
 
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
 //
-// Any pod can call op.HasLock() here at any given time to know whether they are the leader or not.
+// Any pod can call HasLock() here at any given time to know whether they are leader or not.
 //   hl, _ := op.HasLock()
 //   if hl {
 //     log.Println("leader here!")
