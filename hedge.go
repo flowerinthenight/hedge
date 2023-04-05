@@ -90,11 +90,11 @@ func (w withLeaderHandler) Apply(op *Op) {
 // object itself. The handler's returning []byte will serve as reply.
 //
 // Typical flow would be:
-//  1) Any node (including the leader) calls the Send(...) API.
-//  2) The current leader handles the call by reading the input.
-//  3) Leader will then call FnLeaderHandler, passing the arbitrary data
+//  1. Any node (including the leader) calls the Send(...) API.
+//  2. The current leader handles the call by reading the input.
+//  3. Leader will then call FnLeaderHandler, passing the arbitrary data
 //     along with the message.
-//  4) FnLeaderHandler will process the data as leader, then returns the
+//  4. FnLeaderHandler will process the data as leader, then returns the
 //     reply to the calling member.
 func WithLeaderHandler(d interface{}, h FnMsgHandler) Option {
 	return withLeaderHandler{d, h}
@@ -126,7 +126,8 @@ type withLogger struct{ l *log.Logger }
 func (w withLogger) Apply(op *Op) { op.logger = w.l }
 
 // WithLogger sets Op's logger object. Can be silenced by setting v to:
-//  log.New(ioutil.Discard, "", 0)
+//
+//	log.New(ioutil.Discard, "", 0)
 func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
 // Op is our main instance for hedge operations.
@@ -452,10 +453,11 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 
 // Get reads a key (or keys) from Op.
 // The values of limit are:
-//  limit = 0  --> (default) latest only
-//  limit = -1 --> all (latest to oldest, [0]=latest)
-//  limit = -2 --> oldest version only
-//  limit > 0  --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
+//
+//	limit = 0  --> (default) latest only
+//	limit = -1 --> all (latest to oldest, [0]=latest)
+//	limit = -2 --> oldest version only
+//	limit > 0  --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
 	ret := []KeyValue{}
 	query := `select key, value, timestamp
@@ -768,7 +770,7 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 		return net.DialTimeout("tcp", leader, timeout)
 	}
 
-	type conn_t struct {
+	type connT struct {
 		conn net.Conn
 		err  error
 	}
@@ -785,10 +787,10 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 			continue
 		}
 
-		ch := make(chan conn_t, 1)
+		ch := make(chan connT, 1)
 		go func() {
 			c, e := getConn()
-			ch <- conn_t{c, e}
+			ch <- connT{c, e}
 		}()
 
 		res := <-ch
