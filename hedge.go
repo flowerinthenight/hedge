@@ -17,6 +17,7 @@ import (
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
+	"github.com/hashicorp/memberlist"
 	"google.golang.org/api/iterator"
 )
 
@@ -41,6 +42,10 @@ var (
 	ErrNoHandler    = fmt.Errorf("hedge: no message handler")
 	ErrNotSupported = fmt.Errorf("hedge: not supported")
 	ErrInvalidConn  = fmt.Errorf("hedge: invalid connection")
+
+	cctx = func(p context.Context) context.Context {
+		return context.WithValue(p, struct{}{}, nil)
+	}
 )
 
 type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
@@ -144,17 +149,19 @@ type Op struct {
 	fnBroadcast FnMsgHandler // broadcast message handler
 	fnBcData    interface{}  // arbitrary data passed to fnBroadcast
 
-	*spindle.Lock                     // handles our distributed lock
-	members       map[string]struct{} // key=id
-	mtx           sync.Mutex          // local mutex
-	mtxSem        sync.Mutex          // semaphore mutex
-	ensureOn      int32               // 1=semaphore checker running
-	ensureCh      chan string         // please check this id
-	ensureCtx     context.Context
-	ensureCancel  context.CancelFunc
-	ensureDone    chan struct{}
-	active        int32       // 1=running, 0=off
-	logger        *log.Logger // internal logger
+	*spindle.Lock          // handles our distributed lock
+	*memberlist.Memberlist // cluster members
+	memberlistConf         *memberlist.Config
+
+	mtx          sync.Mutex  // local mutex
+	mtxSem       sync.Mutex  // semaphore mutex
+	ensureOn     int32       // 1=semaphore checker running
+	ensureCh     chan string // please check this id
+	ensureCtx    context.Context
+	ensureCancel context.CancelFunc
+	ensureDone   chan struct{}
+	active       int32       // 1=running, 0=off
+	logger       *log.Logger // internal logger
 }
 
 // String implements the Stringer interface.
@@ -255,144 +262,66 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		<-spindleDone // and wait
 	}()
 
-	// Start tracking online members.
-	op.members[op.hostPort] = struct{}{}
-	mbchkDone := make(chan error, 1)
-	mbchkCtx := context.WithValue(ctx, struct{}{}, nil)
+	op.Memberlist, err = memberlist.Create(op.memberlistConf)
+	if err != nil {
+		err = fmt.Errorf("hedge: memberlist failed: %w", err)
+		return err
+	}
+
+	defer op.Shutdown()
+	lconn, err := op.getLeaderConn(ctx) // try waiting for the leader
+	if err != nil {
+		return err
+	}
+
+	if lconn != nil {
+		defer lconn.Close()
+	}
+
+	// Setup our memberlist.
+	var join bool
+	ticker := time.NewTicker(time.Second * 2)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	ticker := time.NewTicker(time.Millisecond * time.Duration(op.lockTimeout))
-	defer func() {
-		ticker.Stop()
-		<-mbchkDone
-	}()
-
+	membersCtx := cctx(ctx)
+	var w sync.WaitGroup
+	w.Add(1)
 	go func() {
-		var active int32
-		ensureMembers := func() {
-			atomic.StoreInt32(&active, 1)
-			defer atomic.StoreInt32(&active, 0)
-			ch := make(chan *string)
-			emdone := make(chan struct{}, 1)
-			todel := []string{}
-			go func() {
-				for {
-					m := <-ch
-					switch {
-					case m == nil:
-						emdone <- struct{}{}
-						return
-					default:
-						todel = append(todel, *m)
-					}
-				}
-			}()
+		defer w.Done()
+		var n int
 
-			var w sync.WaitGroup
-			allm := op.getMembers()
-			for k := range allm {
-				w.Add(1)
-				go func(id string) {
-					defer func() { w.Done() }()
-					timeout := time.Second * 5
-					conn, err := net.DialTimeout("tcp", id, timeout)
-					if err != nil {
-						ch <- &id // delete this
-						return
-					}
-
-					r, err := op.send(conn, CmdPing+"\n")
-					if err != nil {
-						ch <- &id // delete this
-						return
-					}
-
-					if r != CmdAck {
-						ch <- &id // delete this
-					}
-				}(k)
-			}
-
-			w.Wait()
-			ch <- nil // close;
-			<-emdone  // and wait
-			for _, rm := range todel {
-				if rm != "" {
-					op.logger.Printf("[leader] delete %v", rm)
-					op.delMember(rm)
-				}
-			}
-
-			// Broadcast active members to all.
-			for k := range op.getMembers() {
-				w.Add(1)
-				go func(id string) {
-					defer w.Done()
-					timeout := time.Second * 5
-					conn, err := net.DialTimeout("tcp", id, timeout)
-					if err != nil {
-						return
-					}
-
-					defer conn.Close()
-					msg := fmt.Sprintf("%v %v\n", CmdMembers, op.encodeMembers())
-					op.send(conn, msg)
-				}(k)
-			}
-
-			w.Wait()
-		}
-
-		var hbactive int32
-		heartbeat := func() {
-			atomic.StoreInt32(&hbactive, 1)
-			defer atomic.StoreInt32(&hbactive, 0)
-			lconn, err := op.getLeaderConn(ctx)
-			if err != nil {
-				return
-			}
-
-			if lconn != nil {
-				defer lconn.Close()
-			}
-
-			msg := fmt.Sprintf("%v %v\n", CmdPing, op.hostPort)
-			r, err := op.send(lconn, msg)
-			if err != nil {
-				return
-			}
-
-			b, _ := base64.StdEncoding.DecodeString(r)
-			var allm map[string]struct{}
-			json.Unmarshal(b, &allm)
-			op.setMembers(allm)
-		}
-
+	loop:
 		for {
+			n++
 			select {
-			case <-mbchkCtx.Done():
-				mbchkDone <- nil
-				return
+			case <-membersCtx.Done():
+				ticker.Stop()
+				break loop
 			case <-first:
 			case <-ticker.C:
 			}
 
-			if op.fnBroadcast == nil {
-				op.logger.Println("no broadcast support")
-				mbchkDone <- nil
-				return
+			if !join {
+				leader, _ := op.Leader()
+				leader, _, _ = net.SplitHostPort(leader)
+				contacted, err := op.Join([]string{leader})
+				if err != nil {
+					op.logger.Printf("failed to join cluster: %v", err)
+				} else {
+					op.logger.Printf("contacted=%v, join=%v", contacted, leader)
+					join = true
+				}
 			}
 
-			if atomic.LoadInt32(&hbactive) == 0 {
-				go heartbeat() // tell leader we're online
-			}
+			if (n % 10) == 0 {
+				members := []string{}
+				for _, m := range op.Members() {
+					h, _, _ := net.SplitHostPort(m.Address())
+					members = append(members, h)
+				}
 
-			if hl, _ := op.HasLock(); !hl {
-				continue
-			}
-
-			if atomic.LoadInt32(&active) == 0 {
-				go ensureMembers() // leader only
+				op.logger.Printf("members=%v, list=%v, n=%v",
+					len(members), strings.Join(members, ","), n)
 			}
 		}
 	}()
@@ -407,6 +336,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		<-op.ensureDone   // and wait
 	}
 
+	w.Wait() // memberlist
 	return nil
 }
 
@@ -642,9 +572,12 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 
 	outs := []BroadcastOutput{}
 	var w sync.WaitGroup
-	members := op.getMembers()
+	// members := op.getMembers()
+	members := op.Members()
 	outch := make(chan BroadcastOutput, len(members))
-	for k := range members {
+	for _, m := range members {
+		host, _, _ := net.SplitHostPort(m.Address())
+		_, port, _ := net.SplitHostPort(op.hostPort)
 		w.Add(1)
 		go func(id string) {
 			defer w.Done()
@@ -676,7 +609,7 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 			// If not ACK, then the whole reply is an error string.
 			r, _ := base64.StdEncoding.DecodeString(reply)
 			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf(string(r))}
-		}(k)
+		}(net.JoinHostPort(host, port))
 	}
 
 	w.Wait()
@@ -806,37 +739,6 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
-func (op *Op) getMembers() map[string]struct{} {
-	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	return op.members
-}
-
-func (op *Op) encodeMembers() string {
-	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	b, _ := json.Marshal(op.members)
-	return base64.StdEncoding.EncodeToString(b)
-}
-
-func (op *Op) setMembers(m map[string]struct{}) {
-	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	op.members = m
-}
-
-func (op *Op) addMember(id string) {
-	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	op.members[id] = struct{}{}
-}
-
-func (op *Op) delMember(id string) {
-	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	delete(op.members, id)
-}
-
 // New creates an instance of Op. hostPort should be in ip:port format. The internal spindle object's
 // lock table name will be lockTable, and lockName is the lock name. logTable will serve as our
 // append-only, distributed key/value storage table.
@@ -847,7 +749,6 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		lockTable:     lockTable,
 		lockName:      lockName,
 		logTable:      logTable,
-		members:       make(map[string]struct{}),
 		ensureCh:      make(chan string),
 		ensureDone:    make(chan struct{}, 1),
 		Lock:          &spindle.Lock{}, // init later
@@ -869,5 +770,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		op.logger = log.New(os.Stdout, prefix, log.LstdFlags)
 	}
 
+	op.memberlistConf = memberlist.DefaultLANConfig()
+	op.memberlistConf.Logger = op.logger
 	return op
 }

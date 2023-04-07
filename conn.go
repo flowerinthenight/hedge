@@ -115,30 +115,6 @@ func handleConn(ctx context.Context, op *Op, conn net.Conn) {
 			reply := op.buildAckReply(nil)
 			conn.Write([]byte(reply))
 			return
-		case strings.HasPrefix(msg, CmdPing+" "): // heartbeat
-			op.addMember(strings.Split(msg, " ")[1])
-			reply := op.encodeMembers() + "\n"
-			conn.Write([]byte(reply))
-			return
-		case strings.HasPrefix(msg, CmdMembers+" "): // broadcast online members
-			payload := strings.Split(msg, " ")[1]
-			decoded, _ := base64.StdEncoding.DecodeString(payload)
-			var m map[string]struct{}
-			json.Unmarshal(decoded, &m)
-			m[op.hostPort] = struct{}{} // just to be sure
-			op.setMembers(m)            // then replace my records
-			members := op.getMembers()
-			mlist := []string{}
-			for k := range members {
-				mlist = append(mlist, k)
-			}
-
-			op.logger.Printf("members=%v, list=%v",
-				len(op.getMembers()), strings.Join(mlist, ","))
-
-			reply := op.buildAckReply(nil)
-			conn.Write([]byte(reply))
-			return
 		case strings.HasPrefix(msg, CmdSemaphore+" "): // create semaphore; we are leader
 			reply := op.buildAckReply(nil)
 			func() {
