@@ -262,13 +262,6 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		<-spindleDone // and wait
 	}()
 
-	op.Memberlist, err = memberlist.Create(op.memberlistConf)
-	if err != nil {
-		err = fmt.Errorf("hedge: memberlist failed: %w", err)
-		return err
-	}
-
-	defer op.Shutdown()
 	lconn, err := op.getLeaderConn(ctx) // try waiting for the leader
 	if err != nil {
 		return err
@@ -279,22 +272,29 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	}
 
 	// Setup our memberlist.
-	var join bool
+	op.Memberlist, err = memberlist.Create(op.memberlistConf)
+	if err != nil {
+		err = fmt.Errorf("hedge: memberlist failed: %w", err)
+		return err
+	}
+
+	defer op.Shutdown() // memberlist
 	ticker := time.NewTicker(time.Second * 2)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	membersCtx := cctx(ctx)
+	ctxMembers := cctx(ctx)
 	var w sync.WaitGroup
 	w.Add(1)
 	go func() {
 		defer w.Done()
+		var join bool
 		var n int
 
 	loop:
 		for {
 			n++
 			select {
-			case <-membersCtx.Done():
+			case <-ctxMembers.Done():
 				ticker.Stop()
 				break loop
 			case <-first:
@@ -313,15 +313,8 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				}
 			}
 
-			if (n % 10) == 0 {
-				members := []string{}
-				for _, m := range op.Members() {
-					h, _, _ := net.SplitHostPort(m.Address())
-					members = append(members, h)
-				}
-
-				op.logger.Printf("members=%v, list=%v, n=%v",
-					len(members), strings.Join(members, ","), n)
+			if (n % 30) == 0 {
+				op.logger.Printf("members=%v, n=%v", len(op.Members()), n)
 			}
 		}
 	}()
