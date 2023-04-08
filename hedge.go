@@ -17,6 +17,7 @@ import (
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
+	"github.com/hashicorp/memberlist"
 	"google.golang.org/api/iterator"
 )
 
@@ -837,9 +838,10 @@ func (op *Op) delMember(id string) {
 	delete(op.members, id)
 }
 
-// New creates an instance of Op. hostPort should be in ip:port format. The internal spindle object's
-// lock table name will be lockTable, and lockName is the lock name. logTable will serve as our
-// append-only, distributed key/value storage table.
+// New creates an instance of Op. hostPort can be in "ip:port" format, or ":port" format, in which case
+// the IP part will be resolved internally, or empty, in which case port 8080 will be used. The internal
+// spindle object's lock table name will be lockTable, and lockName is the lock name. logTable will
+// serve as our append-only, distributed key/value storage table.
 func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string, opts ...Option) *Op {
 	op := &Op{
 		hostPort:      hostPort,
@@ -855,6 +857,24 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 
 	for _, opt := range opts {
 		opt.Apply(op)
+	}
+
+	host, port, _ := net.SplitHostPort(op.hostPort)
+	switch {
+	case host == "" && port != "":
+		// We will use memberlist for IP resolution.
+		list, _ := memberlist.Create(memberlist.DefaultLANConfig())
+		localNode := list.LocalNode()
+		lh, _, _ := net.SplitHostPort(localNode.Address())
+		op.hostPort = net.JoinHostPort(lh, port)
+		list.Shutdown()
+	case host == "" && port == "":
+		// We will use memberlist for IP resolution.
+		list, _ := memberlist.Create(memberlist.DefaultLANConfig())
+		localNode := list.LocalNode()
+		lh, _, _ := net.SplitHostPort(localNode.Address())
+		op.hostPort = net.JoinHostPort(lh, "8080")
+		list.Shutdown()
 	}
 
 	switch {
