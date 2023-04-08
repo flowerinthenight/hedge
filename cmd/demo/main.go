@@ -123,11 +123,6 @@ func main() {
 			func(data interface{}, msg []byte) ([]byte, error) {
 				log.Println("[broadcast/semaphore] received:", string(msg))
 				ss := strings.Split(string(msg), " ")
-				if len(ss) < 2 {
-					log.Println("incorrect len")
-					return nil, nil
-				}
-
 				name, slimit := ss[0], ss[1]
 				limit, err := strconv.Atoi(slimit)
 				if err != nil {
