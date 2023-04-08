@@ -14,12 +14,12 @@ Leader election is handled by `spindle`. Two APIs are provided for storage: `Put
 
 A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader at any time.
 
-A `Broadcast()` API is also available for all pods. Note that due to the nature of k8s deployments (pods come and go) and the internal heartbeat delays, some pods might not receive the broadcast message at call time, although all pods will have the complete broadcast target list eventually.
+A `Broadcast()` API is also available for all pods. Note that due to the nature of k8s deployments (pods come and go) and the internal heartbeat delays, some pods might not receive the broadcast message at call time, although all pods will have the complete broadcast target list eventually. `hedge` uses a combination of heartbeats and broadcasts to propagate member information to all pods; non-leaders send liveness heartbeats to the leader while the leader broadcasts active members to all pods.
 
 Finally, a distributed semaphore is also provided through the `NewSemaphore()`, `[Try]Acquire()`, and `Release()` APIs.
 
 ## Prerequisites
-* All pods within the group should be able to contact each other via TCP (address:port).
+* All pods within the group should be able to contact each other via TCP (address:port). You can use [downward API](https://kubernetes.io/docs/concepts/workloads/pods/downward-api/) for this.
 * Each `hedge`'s instance id should be set using the pod's cluster IP address:port.
 * For now, `spindle`'s lock table and `hedge`'s log table are within the same database.
 * Tables for `spindle` and `hedge` need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle#usage) for `spindle`'s DDL. For `hedge`, see below:
@@ -79,10 +79,18 @@ done := make(chan error, 1) // optional wait
 go op.Run(ctx, done)
 
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
-// For distributed locking, any pod can call op.HasLock() here.
+//
+// Any pod can call HasLock() here at any given time to know whether they are leader or not.
+//   hl, _ := op.HasLock()
+//   if hl {
+//     log.Println("leader here!")
+//   }
+//
 // Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
+//
 // For broadcast, any pod can call op.Broadcast(...) here which will be handled by each
 //   pod's WithBroadcastHandler callback, including the caller.
+//
 // For distributed semaphore, any pod can call the following:
 //   sem, _ := op.NewSemaphore(ctx, "semaphore-name", 2)
 //   sem.Acquire(ctx)
