@@ -22,7 +22,6 @@ import (
 var (
 	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
 	lockName     = flag.String("lockname", "hedge-demo-group", "lock name, common to all instances")
-	id           = flag.String("id", os.Getenv("K8S_POD_IP"), "this instance's unique id within the group") // see deployment_template.yaml
 	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
 	logTable     = flag.String("logtable", "testhedge_log", "the table for our log data")
 )
@@ -109,7 +108,7 @@ func main() {
 
 	defer client.Close()
 	xdata := "some arbitrary data"
-	op := hedge.New(client, *id+":8080", *spindleTable, *lockName, *logTable,
+	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithLeaderHandler(
 			xdata, // if you don't need *Op object
 			func(data interface{}, msg []byte) ([]byte, error) {
