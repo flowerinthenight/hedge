@@ -16,6 +16,7 @@ require (
 	cloud.google.com/go/compute v1.19.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.0.0 // indirect
+	cloud.google.com/go/kms v1.10.1 // indirect
 	cloud.google.com/go/pubsub v1.30.0 // indirect
 	github.com/NYTimes/gizmo v1.3.6 // indirect
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
