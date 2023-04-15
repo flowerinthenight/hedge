@@ -42,6 +42,10 @@ var (
 	ErrNoHandler    = fmt.Errorf("hedge: no message handler")
 	ErrNotSupported = fmt.Errorf("hedge: not supported")
 	ErrInvalidConn  = fmt.Errorf("hedge: invalid connection")
+
+	cctx = func(ctx context.Context) context.Context {
+		return context.WithValue(ctx, struct{}{}, nil)
+	}
 )
 
 type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
@@ -249,8 +253,8 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	)
 
 	spindleDone := make(chan error, 1)
-	spindleCtx, cancel := context.WithCancel(context.Background())
-	op.Lock.Run(spindleCtx, spindleDone)
+	ctxSpindle, cancel := context.WithCancel(context.Background())
+	op.Lock.Run(ctxSpindle, spindleDone)
 	defer func() {
 		cancel()      // stop spindle;
 		<-spindleDone // and wait
@@ -259,7 +263,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	// Start tracking online members.
 	op.members[op.hostPort] = struct{}{}
 	mbchkDone := make(chan error, 1)
-	mbchkCtx := context.WithValue(ctx, struct{}{}, nil)
+	ctxMembers := cctx(ctx)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
 	ticker := time.NewTicker(time.Millisecond * time.Duration(op.lockTimeout))
@@ -270,7 +274,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 	go func() {
 		var active int32
-		ensureMembers := func() {
+		fnEnsureMembers := func() {
 			atomic.StoreInt32(&active, 1)
 			defer atomic.StoreInt32(&active, 0)
 			ch := make(chan *string)
@@ -345,7 +349,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		}
 
 		var hbactive int32
-		heartbeat := func() {
+		fnHeartbeat := func() {
 			atomic.StoreInt32(&hbactive, 1)
 			defer atomic.StoreInt32(&hbactive, 0)
 			lconn, err := op.getLeaderConn(ctx)
@@ -371,7 +375,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 		for {
 			select {
-			case <-mbchkCtx.Done():
+			case <-ctxMembers.Done():
 				mbchkDone <- nil
 				return
 			case <-first:
@@ -385,7 +389,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			if atomic.LoadInt32(&hbactive) == 0 {
-				go heartbeat() // tell leader we're online
+				go fnHeartbeat() // tell leader we're online
 			}
 
 			if hl, _ := op.HasLock(); !hl {
@@ -393,7 +397,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			if atomic.LoadInt32(&active) == 0 {
-				go ensureMembers() // leader only
+				go fnEnsureMembers() // leader only
 			}
 		}
 	}()
