@@ -83,7 +83,7 @@ type withGroupSyncInterval time.Duration
 func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w) }
 
 // WithGroupSyncInterval sets the internal interval timeout to sync membership
-// within the group. If not set, the default will be 5s. Minimum is 2s.
+// within the group. If not set, defaults to 30s. Minimum value is 2s.
 func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
 
 type withLeaderHandler struct {
@@ -899,7 +899,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 
 	switch {
 	case op.syncInterval == 0:
-		op.syncInterval = time.Second * 5 // default
+		op.syncInterval = time.Second * 30 // default
 	case op.syncInterval < (time.Second * 2):
 		op.syncInterval = time.Second * 2 // minimum
 	}
