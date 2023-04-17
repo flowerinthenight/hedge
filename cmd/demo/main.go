@@ -109,6 +109,7 @@ func main() {
 	defer client.Close()
 	xdata := "some arbitrary data"
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
+		hedge.WithGroupSyncInterval(time.Second*5),
 		hedge.WithLeaderHandler(
 			xdata, // if you don't need *Op object
 			func(data interface{}, msg []byte) ([]byte, error) {

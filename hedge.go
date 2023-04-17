@@ -78,6 +78,14 @@ func (w withDuration) Apply(op *Op) { op.lockTimeout = int64(w) }
 // Defaults to 30s when not set. Minimum value is 2s.
 func WithDuration(v int64) Option { return withDuration(v) }
 
+type withGroupSyncInterval time.Duration
+
+func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w) }
+
+// WithGroupSyncInterval sets the internal interval timeout to sync membership
+// within the group. If not set, the default will be 5s. Minimum is 2s.
+func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
+
 type withLeaderHandler struct {
 	d interface{}
 	h FnMsgHandler
@@ -151,6 +159,7 @@ type Op struct {
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
+	syncInterval  time.Duration       // ensure membership
 	mtx           sync.Mutex          // local mutex
 	mtxSem        sync.Mutex          // semaphore mutex
 	ensureOn      int32               // 1=semaphore checker running
@@ -262,14 +271,14 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 	// Start tracking online members.
 	op.members[op.hostPort] = struct{}{}
-	mbchkDone := make(chan error, 1)
+	membersDone := make(chan error, 1)
 	ctxMembers := cctx(ctx)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	ticker := time.NewTicker(time.Millisecond * time.Duration(op.lockTimeout))
+	ticker := time.NewTicker(op.syncInterval)
 	defer func() {
 		ticker.Stop()
-		<-mbchkDone
+		<-membersDone
 	}()
 
 	go func() {
@@ -376,7 +385,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		for {
 			select {
 			case <-ctxMembers.Done():
-				mbchkDone <- nil
+				membersDone <- nil
 				return
 			case <-first:
 			case <-ticker.C:
@@ -384,7 +393,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			if op.fnBroadcast == nil {
 				op.logger.Println("no broadcast support")
-				mbchkDone <- nil
+				membersDone <- nil
 				return
 			}
 
@@ -886,6 +895,13 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		op.lockTimeout = 30000 // default 30s
 	case op.lockTimeout < 2000:
 		op.lockTimeout = 2000 // minimum 2s
+	}
+
+	switch {
+	case op.syncInterval == 0:
+		op.syncInterval = time.Second * 5 // default
+	case op.syncInterval < (time.Second * 2):
+		op.syncInterval = time.Second * 2 // minimum
 	}
 
 	if op.logger == nil {
