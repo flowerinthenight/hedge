@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -11,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -35,22 +33,13 @@ func onMessage(app interface{}, data []byte) error {
 	ss := strings.Split(string(data), " ")
 
 	switch strings.ToLower(ss[0]) {
-	case "get": // "get <key>"
-		v, err := op.Get(ctx, ss[1])
-		if err != nil {
-			log.Println(err)
-			break
-		}
-
-		b, _ := json.Marshal(v)
-		log.Printf("%v", string(b))
 	case "broadcast": // broadcast <payload>
 		if len(ss) < 2 {
 			log.Println("invalid msg fmt, should be `broadcast <msg>`")
 			break
 		}
 
-		vv := op.Broadcast(context.Background(), []byte(ss[1]))
+		vv := op.Broadcast(ctx, []byte(ss[1]))
 		for _, v := range vv {
 			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
 				v.Id, string(v.Reply), v.Error)
@@ -97,39 +86,47 @@ func main() {
 		hedge.WithBroadcastHandler(
 			nil, // since this is nil, 'data' should be 'op'
 			func(data interface{}, msg []byte) ([]byte, error) {
-				log.Println("[broadcast/semaphore] received:", string(msg))
-				ss := strings.Split(string(msg), " ")
-				name, slimit := ss[0], ss[1]
-				limit, err := strconv.Atoi(slimit)
-				if err != nil {
-					log.Println("invalid limit:", err)
-					return nil, err
-				}
+				op := data.(*hedge.Op)
+				hostname, _ := os.Hostname()
+				name := fmt.Sprintf("%v/%v", hostname, op.Name())
+				log.Println("[broadcast] received:", string(msg))
+				reply := fmt.Sprintf("node [%v] received the broadcast message [%v] on %v",
+					name, string(msg), time.Now().Format(time.RFC3339))
+				return []byte(reply), nil
 
-				go func() {
-					op := data.(*hedge.Op)
-					min, max := 10, 30
-					tm := rand.Intn(max-min+1) + min
-					s, err := op.NewSemaphore(context.Background(), name, limit)
-					if err != nil {
-						log.Println("NewSemaphore failed:", err)
-						return
-					}
+				// log.Println("[broadcast/semaphore] received:", string(msg))
+				// ss := strings.Split(string(msg), " ")
+				// name, slimit := ss[0], ss[1]
+				// limit, err := strconv.Atoi(slimit)
+				// if err != nil {
+				// 	log.Println("invalid limit:", err)
+				// 	return nil, err
+				// }
 
-					err = s.Acquire(context.Background())
-					if err != nil {
-						log.Println("Acquire failed:", err)
-						return
-					}
+				// go func() {
+				// 	op := data.(*hedge.Op)
+				// 	min, max := 10, 30
+				// 	tm := rand.Intn(max-min+1) + min
+				// 	s, err := op.NewSemaphore(context.Background(), name, limit)
+				// 	if err != nil {
+				// 		log.Println("NewSemaphore failed:", err)
+				// 		return
+				// 	}
 
-					log.Printf("semaphore acquired! simulate work for %vs, id=%v", tm, op.HostPort())
-					time.Sleep(time.Second * time.Duration(tm))
+				// 	err = s.Acquire(context.Background())
+				// 	if err != nil {
+				// 		log.Println("Acquire failed:", err)
+				// 		return
+				// 	}
 
-					log.Printf("release semaphore, id=%v", op.HostPort())
-					s.Release(context.Background())
-				}()
+				// 	log.Printf("semaphore acquired! simulate work for %vs, id=%v", tm, op.HostPort())
+				// 	time.Sleep(time.Second * time.Duration(tm))
 
-				return nil, nil
+				// 	log.Printf("release semaphore, id=%v", op.HostPort())
+				// 	s.Release(context.Background())
+				// }()
+
+				// return nil, nil
 			},
 		),
 	)
@@ -190,7 +187,7 @@ func main() {
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
 		msg := "hello" // default
-		b, err := ioutil.ReadAll(r.Body)
+		b, _ := ioutil.ReadAll(r.Body)
 		defer r.Body.Close()
 		if len(string(b)) > 0 {
 			msg = string(b)
@@ -206,6 +203,31 @@ func main() {
 		log.Printf("reply: %v", string(v))
 		out := fmt.Sprintf("sender=%v, reply=%v", hostname, string(v))
 		w.Write([]byte(out))
+	})
+
+	mux.HandleFunc("/broadcast", func(w http.ResponseWriter, r *http.Request) {
+		hostname, _ := os.Hostname()
+		msg := "hello" // default
+		b, _ := ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		if len(string(b)) > 0 {
+			msg = string(b)
+		}
+
+		outs := []string{}
+		log.Printf("broadcast %q msg to all...", msg)
+		vv := op.Broadcast(context.Background(), []byte(msg))
+		for _, v := range vv {
+			if v.Error != nil {
+				out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, v.Error.Error())
+				outs = append(outs, out)
+			} else {
+				out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, string(v.Reply))
+				outs = append(outs, out)
+			}
+		}
+
+		w.Write([]byte(strings.Join(outs, "\n")))
 	})
 
 	s := &http.Server{Addr: ":8081", Handler: mux}
