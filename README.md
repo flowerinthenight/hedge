@@ -113,7 +113,7 @@ $ kubepfm --target deployment/hedgedemo:8081:8081
 $ curl localhost:8081/put -d "samplekey samplevalue"
 
 # To ensure a non-leader sender, you can also specify a
-# non-leader pod for kubepfm command above:
+# non-leader pod for the kubepfm command above:
 $ kubepfm --target hedgedemo-6b5bcd4998-n95n7:8081:8081
 ```
 
