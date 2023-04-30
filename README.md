@@ -49,7 +49,6 @@ Something like:
 client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
 defer client.Close()
 
-xdata := "some arbitrary data"
 op := hedge.New(
     client,
     ":8080", // addr will be resolved internally
@@ -57,17 +56,15 @@ op := hedge.New(
     "myspindlelock",
     "logtable",
     hedge.WithLeaderHandler( // if leader only, handles Send()
-        xdata,
+        nil,
         func(data interface{}, msg []byte) ([]byte, error) {
-            log.Println("[send] xdata:", data.(string))
             log.Println("[send] received:", string(msg))
             return []byte("hello " + string(msg)), nil
         },
     ),
     hedge.WithBroadcastHandler( // handles Broadcast()
-        xdata,
+        nil,
         func(data interface{}, msg []byte) ([]byte, error) {
-            log.Println("[broadcast] xdata:", data.(string))
             log.Println("[broadcast] received:", string(msg))
             return []byte("broadcast " + string(msg)), nil
         },
@@ -101,27 +98,40 @@ cancel()
 <-done
 ```
 
-A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner and PubSub permissions.
+A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner permissions.
 
-Once deployed, you can test by sending PubSub messages to the created topic while checking the logs.
+Once deployed, you can do the following tests while checking the logs. We will use [kubepfm](https://github.com/flowerinthenight/kubepfm) to port-forward our test commands to the server.
+
+Test the `Put()` API:
+
 ```sh
-# Test the Put() API, key=hello, value=world
-# Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='put hello world'
+# Open a terminal and run:
+$ kubepfm --target deployment/hedgedemo:8081:8081
 
-# Test the Get() API, key=hello
-# Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
+# Open another terminal and run:
+$ curl localhost:8081/put -d "samplekey samplevalue"
 
-# Test the Send() API
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='send world'
+# To ensure a non-leader sender, you can specify a non-leader pod for kubepfm:
+$ kubepfm --target hedgedemo-6b5bcd4998-n95n7:8081:8081
+```
 
-# Test the Broadcast() API
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='broadcast hello'
+Test the `Get()` API:
 
-# Test the semaphore APIs. If you used the sample deployment yaml, you have 3 running
-# pods. This message will cause two pods to create/acquire the 'testsem' semaphore
-# (with limit 2) while the remaining pod will block until one of the two will release
-# the semaphore after a random timeout.
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='semaphore testsem 2'
+```sh
+# While kubepfm is running on a different terminal, run:
+$ curl localhost:8081/get -d "samplekey"
+```
+
+Test the `Send()` API:
+
+```sh
+# While kubepfm is running on a different terminal, run:
+$ curl localhost:8081/send -d "hello-world"
+```
+
+Test the `Broadcast()` API:
+
+```sh
+# While kubepfm is running on a different terminal, run:
+$ curl localhost:8081/broadcast -d "hello-all"
 ```
