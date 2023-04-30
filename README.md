@@ -102,14 +102,27 @@ A sample [deployment](./deployment_template.yaml) file for GKE is provided, alth
 
 Once deployed, you can do the following tests while checking the logs. We will use [kubepfm](https://github.com/flowerinthenight/kubepfm) to port-forward our test commands to the server.
 
+Test the `Put()` API:
+
 ```sh
-# Test the Put() API, key=hello, value=world
 # Open a terminal and run:
 $ kubepfm --target deployment/hedgedemo:8081:8081
 
 # Open another terminal and run:
 $ curl localhost:8081/put -d "samplekey samplevalue"
 
+# To ensure that the sender in nonleader, you can specify the pod for kubepfm:
+$ kubepfm --target hedgedemo-6b5bcd4998-n95n7:8081:8081
+```
+
+Test the `Get()` API:
+
+```sh
+# Open another terminal and run:
+$ curl localhost:8081/get -d "samplekey"
+```
+
+```sh
 # Test the Get() API, key=hello
 # Try running multiple times to see leader and non-leader pods handling the messages.
 $ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
