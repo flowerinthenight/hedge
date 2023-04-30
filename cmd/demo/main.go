@@ -59,19 +59,6 @@ func onMessage(app interface{}, data []byte) error {
 
 		b, _ := json.Marshal(v)
 		log.Printf("%v", string(b))
-	case "send": // send <payload>
-		if len(ss) < 2 {
-			log.Println("invalid msg fmt, should be `send <msg>`")
-			break
-		}
-
-		v, err := op.Send(context.Background(), []byte(ss[1]))
-		if err != nil {
-			log.Println(err)
-			break
-		}
-
-		log.Printf("reply(send): %v", string(v))
 	case "broadcast": // broadcast <payload>
 		if len(ss) < 2 {
 			log.Println("invalid msg fmt, should be `broadcast <msg>`")
@@ -168,6 +155,39 @@ func main() {
 	go op.Run(ctx, done)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/put", func(w http.ResponseWriter, r *http.Request) {
+		hostname, _ := os.Hostname()
+		var key, value string
+
+		// For /put, we expect a fmt: "key value"
+		b, _ := ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		if len(string(b)) > 0 {
+			ss := strings.Split(string(b), " ")
+			if len(ss) < 2 {
+				w.Write([]byte("invalid msg format"))
+				return
+			}
+
+			key = ss[0]
+			value = strings.Join(ss[1:], " ")
+		}
+
+		if key == "" || value == "" {
+			w.Write([]byte("invalid msg format"))
+			return
+		}
+
+		err := op.Put(ctx, hedge.KeyValue{Key: key, Value: value})
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		out := fmt.Sprintf("sender=%v, key=%v, value=%v", hostname, key, value)
+		w.Write([]byte(out))
+	})
+
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
 		msg := "hello" // default
