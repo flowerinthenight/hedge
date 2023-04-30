@@ -35,21 +35,6 @@ func onMessage(app interface{}, data []byte) error {
 	ss := strings.Split(string(data), " ")
 
 	switch strings.ToLower(ss[0]) {
-	case "put": // "put <key> <value>"
-		if len(ss) < 3 {
-			log.Println("invalid msg fmt, should be `put <key> <value>`")
-			break
-		}
-
-		err := op.Put(ctx, hedge.KeyValue{
-			Key:   ss[1],
-			Value: ss[2],
-		})
-
-		if err != nil {
-			log.Println(err)
-			break
-		}
 	case "get": // "get <key>"
 		v, err := op.Get(ctx, ss[1])
 		if err != nil {
@@ -184,7 +169,21 @@ func main() {
 			return
 		}
 
-		out := fmt.Sprintf("sender=%v, key=%v, value=%v", hostname, key, value)
+		out := fmt.Sprintf("put: sender=%v, key=%v, value=%v", hostname, key, value)
+		w.Write([]byte(out))
+	})
+
+	mux.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
+		hostname, _ := os.Hostname()
+		b, _ := ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		v, err := op.Get(ctx, string(b))
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		out := fmt.Sprintf("get: sender=%v, key=%v, value=%+v", hostname, string(b), v)
 		w.Write([]byte(out))
 	})
 
