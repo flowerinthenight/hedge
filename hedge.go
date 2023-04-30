@@ -247,7 +247,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				return
 			}
 
-			go handleConn(ctx, op, conn)
+			go handleMsg(ctx, op, conn)
 		}
 	}()
 

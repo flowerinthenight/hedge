@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func handleConn(ctx context.Context, op *Op, conn net.Conn) {
+func handleMsg(ctx context.Context, op *Op, conn net.Conn) {
 	defer conn.Close()
 	for {
 		msg, err := op.recv(conn)
