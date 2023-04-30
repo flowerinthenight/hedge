@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,7 +18,6 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
-	lspubsub "github.com/flowerinthenight/longsub/gcppubsub"
 )
 
 var (
@@ -107,15 +108,18 @@ func main() {
 	}
 
 	defer client.Close()
-	xdata := "some arbitrary data"
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithGroupSyncInterval(time.Second*5),
 		hedge.WithLeaderHandler(
-			xdata, // if you don't need *Op object
+			nil, // since this is nil, 'data' should be 'op'
 			func(data interface{}, msg []byte) ([]byte, error) {
-				log.Println("[send] xdata:", data.(string))
+				op := data.(*hedge.Op)
+				hostname, _ := os.Hostname()
+				name := fmt.Sprintf("%v/%v", hostname, op.Name())
 				log.Println("[send] received:", string(msg))
-				return []byte("send " + string(msg)), nil
+				reply := fmt.Sprintf("leader [%v] received the message [%v] on %v",
+					name, string(msg), time.Now().Format(time.RFC3339))
+				return []byte(reply), nil
 			},
 		),
 		hedge.WithBroadcastHandler(
@@ -163,26 +167,30 @@ func main() {
 	done := make(chan error, 1)
 	go op.Run(ctx, done)
 
-	project := strings.Split(client.DatabaseName(), "/")[1]
-	t, err := lspubsub.GetTopic(project, "hedge-demo-pubctrl")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	subname := "hedge-demo-subctrl"
-	_, err = lspubsub.GetSubscription(project, subname, t)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	donectl := make(chan error, 1)
-	go func() {
-		lscmd := lspubsub.NewLengthySubscriber(op, project, subname, onMessage, lspubsub.WithNoExtend(true))
-		err := lscmd.Start(context.WithValue(ctx, struct{}{}, nil), donectl)
-		if err != nil {
-			log.Fatal(err)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
+		hostname, _ := os.Hostname()
+		msg := "hello" // default
+		b, err := ioutil.ReadAll(r.Body)
+		defer r.Body.Close()
+		if len(string(b)) > 0 {
+			msg = string(b)
 		}
-	}()
+
+		log.Printf("sending %q msg to leader...", msg)
+		v, err := op.Send(context.Background(), []byte(msg))
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		log.Printf("reply: %v", string(v))
+		out := fmt.Sprintf("sender=%v, reply=%v", hostname, string(v))
+		w.Write([]byte(out))
+	})
+
+	s := &http.Server{Addr: ":8081", Handler: mux}
+	go s.ListenAndServe()
 
 	// Interrupt handler.
 	go func() {
@@ -192,6 +200,6 @@ func main() {
 		cancel()
 	}()
 
-	<-donectl
-	<-done
+	<-done // wait ctrl+c
+	s.Shutdown(ctx)
 }
