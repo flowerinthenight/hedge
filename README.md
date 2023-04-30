@@ -101,13 +101,17 @@ cancel()
 <-done
 ```
 
-A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner and PubSub permissions.
+A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner permissions.
 
-Once deployed, you can test by sending PubSub messages to the created topic while checking the logs.
+Once deployed, you can do the following tests while checking the logs. We will use [kubepfm](https://github.com/flowerinthenight/kubepfm) to port-forward our test commands to the server.
+
 ```sh
 # Test the Put() API, key=hello, value=world
-# Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='put hello world'
+# Open a terminal and run:
+$ kubepfm --target deployment/hedgedemo:8081:8081
+
+# Open another terminal and run:
+$ curl localhost:8081/put -d "samplekey samplevalue"
 
 # Test the Get() API, key=hello
 # Try running multiple times to see leader and non-leader pods handling the messages.
