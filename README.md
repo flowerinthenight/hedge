@@ -111,28 +111,32 @@ $ kubepfm --target deployment/hedgedemo:8081:8081
 # Open another terminal and run:
 $ curl localhost:8081/put -d "samplekey samplevalue"
 
-# To ensure that the sender in nonleader, you can specify the pod for kubepfm:
+# To ensure a non-leader sender, you can specify a non-leader pod for kubepfm:
 $ kubepfm --target hedgedemo-6b5bcd4998-n95n7:8081:8081
 ```
 
 Test the `Get()` API:
 
 ```sh
-# Open another terminal and run:
+# While kubepfm is running on a different terminal, run:
 $ curl localhost:8081/get -d "samplekey"
 ```
 
+Test the `Send()` API:
+
 ```sh
-# Test the Get() API, key=hello
-# Try running multiple times to see leader and non-leader pods handling the messages.
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='get hello'
+# While kubepfm is running on a different terminal, run:
+$ curl localhost:8081/send -d "hello-world"
+```
 
-# Test the Send() API
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='send world'
+Test the `Broadcast()` API:
 
-# Test the Broadcast() API
-$ gcloud pubsub topics publish hedge-demo-pubctrl --message='broadcast hello'
+```sh
+# While kubepfm is running on a different terminal, run:
+$ curl localhost:8081/broadcast -d "hello-all"
+```
 
+```sh
 # Test the semaphore APIs. If you used the sample deployment yaml, you have 3 running
 # pods. This message will cause two pods to create/acquire the 'testsem' semaphore
 # (with limit 2) while the remaining pod will block until one of the two will release
