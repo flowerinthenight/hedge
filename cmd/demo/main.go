@@ -25,40 +25,6 @@ var (
 	logTable     = flag.String("logtable", "testhedge_log", "the table for our log data")
 )
 
-func onMessage(app interface{}, data []byte) error {
-	op := app.(*hedge.Op)
-	ctx := context.Background()
-
-	log.Println("recv:", string(data))
-	ss := strings.Split(string(data), " ")
-
-	switch strings.ToLower(ss[0]) {
-	case "broadcast": // broadcast <payload>
-		if len(ss) < 2 {
-			log.Println("invalid msg fmt, should be `broadcast <msg>`")
-			break
-		}
-
-		vv := op.Broadcast(ctx, []byte(ss[1]))
-		for _, v := range vv {
-			log.Printf("reply(broadcast): id=%v, reply=%v, err=%v",
-				v.Id, string(v.Reply), v.Error)
-		}
-	case "semaphore": // semaphore <name> <limit>
-		// Whoever receives this msg will do a broadcast to all nodes, which in turn
-		// will attempt to acquire the semaphore <name>.
-		if len(ss) != 3 {
-			log.Println("invalid msg fmt, should be `semaphore <name> <limit>`")
-			break
-		}
-
-		msg := fmt.Sprintf("%v %v", ss[1], ss[2])
-		op.Broadcast(context.Background(), []byte(msg))
-	}
-
-	return nil
-}
-
 func main() {
 	flag.Parse()
 	rand.Seed(time.Now().UnixNano())

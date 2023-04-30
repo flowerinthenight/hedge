@@ -260,7 +260,7 @@ func handleMsg(ctx context.Context, op *Op, conn net.Conn) {
 		}
 
 		switch {
-		case msg == CmdPing: // leader asking if we are online
+		case msg == CmdPing: // leader asking if we are online (msg has no prefix)
 			reply := op.buildAckReply(nil)
 			conn.Write([]byte(reply))
 			return
