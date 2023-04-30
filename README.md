@@ -49,7 +49,6 @@ Something like:
 client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
 defer client.Close()
 
-xdata := "some arbitrary data"
 op := hedge.New(
     client,
     ":8080", // addr will be resolved internally
@@ -57,17 +56,15 @@ op := hedge.New(
     "myspindlelock",
     "logtable",
     hedge.WithLeaderHandler( // if leader only, handles Send()
-        xdata,
+        nil,
         func(data interface{}, msg []byte) ([]byte, error) {
-            log.Println("[send] xdata:", data.(string))
             log.Println("[send] received:", string(msg))
             return []byte("hello " + string(msg)), nil
         },
     ),
     hedge.WithBroadcastHandler( // handles Broadcast()
-        xdata,
+        nil,
         func(data interface{}, msg []byte) ([]byte, error) {
-            log.Println("[broadcast] xdata:", data.(string))
             log.Println("[broadcast] received:", string(msg))
             return []byte("broadcast " + string(msg)), nil
         },
