@@ -1,4 +1,5 @@
 [![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
+[![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/hedgedemo/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/hedgedemo)
 [![Go Reference](https://pkg.go.dev/badge/github.com/flowerinthenight/hedge.svg)](https://pkg.go.dev/github.com/flowerinthenight/hedge)
 
 ## hedge
