@@ -822,8 +822,13 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 
 func (op *Op) getMembers() map[string]struct{} {
 	op.mtx.Lock()
-	defer op.mtx.Unlock()
-	return op.members
+	copy := make(map[string]struct{})
+	for k, v := range op.members {
+		copy[k] = v
+	}
+
+	op.mtx.Unlock()
+	return copy
 }
 
 func (op *Op) encodeMembers() string {
