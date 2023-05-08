@@ -267,7 +267,7 @@ func handleMsg(ctx context.Context, op *Op, conn net.Conn) {
 		case strings.HasPrefix(msg, CmdLeader):
 			prefix = CmdLeader
 		case strings.HasPrefix(msg, CmdWrite+" "):
-			prefix = CmdLeader + " "
+			prefix = CmdWrite + " "
 		case strings.HasPrefix(msg, CmdSend+" "):
 			prefix = CmdSend + " "
 		case strings.HasPrefix(msg, CmdBroadcast+" "):
