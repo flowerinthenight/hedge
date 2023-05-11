@@ -315,7 +315,9 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 						return
 					}
 
-					r, err := op.send(conn, CmdPing+"\n")
+					var sb strings.Builder
+					fmt.Fprintf(&sb, "%s\n", CmdPing)
+					r, err := op.send(conn, sb.String())
 					if err != nil {
 						ch <- &id // delete this
 						return
@@ -349,8 +351,9 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 					}
 
 					defer conn.Close()
-					msg := fmt.Sprintf("%v %v\n", CmdMembers, op.encodeMembers())
-					op.send(conn, msg)
+					var sb strings.Builder
+					fmt.Fprintf(&sb, "%s %s\n", CmdMembers, op.encodeMembers())
+					op.send(conn, sb.String())
 				}(k)
 			}
 
@@ -370,8 +373,9 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				defer lconn.Close()
 			}
 
-			msg := fmt.Sprintf("%v %v\n", CmdPing, op.hostPort)
-			r, err := op.send(lconn, msg)
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "%s %s\n", CmdPing, op.hostPort)
+			r, err := op.send(lconn, sb.String())
 			if err != nil {
 				return
 			}
@@ -443,10 +447,9 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 		defer conn.Close()
 	}
 
-	msg := fmt.Sprintf("%v %v %v %v\n",
-		CmdSemaphore, name, limit, op.hostPort)
-
-	reply, err := op.send(conn, msg)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s %s %d %s\n", CmdSemaphore, name, limit, op.hostPort)
+	reply, err := op.send(conn, sb.String())
 	if err != nil {
 		return nil, err
 	}
@@ -581,12 +584,14 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 
 	b, _ := json.Marshal(kv)
 	enc := base64.StdEncoding.EncodeToString(b)
-	msg := fmt.Sprintf("%v %v\n", CmdWrite, enc)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s %s\n", CmdWrite, enc)
 	if noappend {
-		msg = fmt.Sprintf("%v %v %v\n", CmdWrite, enc, FlagNoAppend)
+		sb.Reset()
+		fmt.Fprintf(&sb, "%s %s %s\n", CmdWrite, enc, FlagNoAppend)
 	}
 
-	reply, err := op.send(conn, msg)
+	reply, err := op.send(conn, sb.String())
 	if err != nil {
 		return err
 	}
@@ -619,7 +624,9 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	}
 
 	enc := base64.StdEncoding.EncodeToString(msg)
-	reply, err := op.send(conn, fmt.Sprintf("%v %v\n", CmdSend, enc))
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s %s\n", CmdSend, enc)
+	reply, err := op.send(conn, sb.String())
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +678,9 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 
 			defer conn.Close()
 			enc := base64.StdEncoding.EncodeToString(msg)
-			reply, err := op.send(conn, fmt.Sprintf("%v %v\n", CmdBroadcast, enc))
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "%s %s\n", CmdBroadcast, enc)
+			reply, err := op.send(conn, sb.String())
 			if err != nil {
 				outch <- BroadcastOutput{Id: id, Error: err}
 				return
@@ -733,11 +742,14 @@ func (op *Op) recv(conn net.Conn) (string, error) {
 }
 
 func (op *Op) buildAckReply(err error) string {
+	var sb strings.Builder
 	if err != nil {
 		ee := base64.StdEncoding.EncodeToString([]byte(err.Error()))
-		return fmt.Sprintf("%v %v\n", CmdAck, ee)
+		fmt.Fprintf(&sb, "%s %s\n", CmdAck, ee)
+		return sb.String()
 	} else {
-		return fmt.Sprintf("%v\n", CmdAck)
+		fmt.Fprintf(&sb, "%s\n", CmdAck)
+		return sb.String()
 	}
 }
 
@@ -771,7 +783,9 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 		}
 
 		defer lconn.Close()
-		reply, err := op.send(lconn, fmt.Sprintf("%v\n", CmdLeader))
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%s\n", CmdLeader)
+		reply, err := op.send(lconn, sb.String())
 		if err != nil {
 			return nil, err
 		}

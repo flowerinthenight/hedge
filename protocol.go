@@ -11,17 +11,19 @@ import (
 )
 
 func doConfirmLeader(ctx context.Context, op *Op, conn net.Conn, _ string) {
-	reply := op.buildAckReply(nil)
+	var sb strings.Builder
+	sb.WriteString(op.buildAckReply(nil))
 	if hl, _ := op.HasLock(); !hl {
-		reply = "\n"
+		sb.Reset()
+		sb.WriteString("\n")
 	}
 
-	b := []byte(reply)
+	b := []byte(sb.String())
 	conn.Write(b)
 }
 
 func doWrite(ctx context.Context, op *Op, conn net.Conn, msg string) {
-	reply := op.buildAckReply(nil)
+	var sb strings.Builder
 	if hl, _ := op.HasLock(); hl {
 		ss := strings.Split(msg, " ")
 		payload := ss[1]
@@ -36,25 +38,29 @@ func doWrite(ctx context.Context, op *Op, conn net.Conn, msg string) {
 		var kv KeyValue
 		err := json.Unmarshal(decoded, &kv)
 		if err != nil {
-			reply = op.buildAckReply(err)
+			sb.WriteString(op.buildAckReply(err))
 		} else {
-			reply = op.buildAckReply(op.Put(ctx, kv, PutOptions{
+			sb.WriteString(op.buildAckReply(op.Put(ctx, kv, PutOptions{
 				DirectWrite: true,
 				NoAppend:    noappend,
-			}))
+			})))
 		}
 	} else {
-		reply = "\n" // not leader, possible even if previously confirmed
+		sb.WriteString("\n") // not leader, possible even if previously confirmed
 	}
 
-	b := []byte(reply)
+	b := []byte(sb.String())
 	conn.Write(b)
 }
 
 func doSend(ctx context.Context, op *Op, conn net.Conn, msg string) {
-	reply := base64.StdEncoding.EncodeToString([]byte(ErrNoLeader.Error())) + "\n"
+	var sb strings.Builder
+	serr := base64.StdEncoding.EncodeToString([]byte(ErrNoLeader.Error()))
+	fmt.Fprintf(&sb, "%s\n", serr)
 	if hl, _ := op.HasLock(); hl {
-		reply = base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error())) + "\n"
+		sb.Reset()
+		serr := base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error()))
+		fmt.Fprintf(&sb, "%s\n", serr)
 		if op.fnLeader != nil {
 			payload := strings.Split(msg, " ")[1]
 			decoded, _ := base64.StdEncoding.DecodeString(payload)
@@ -65,25 +71,29 @@ func doSend(ctx context.Context, op *Op, conn net.Conn, msg string) {
 
 			r, e := op.fnLeader(data, decoded) // call leader handler
 			if e != nil {
-				reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
+				sb.Reset()
+				serr := base64.StdEncoding.EncodeToString([]byte(e.Error()))
+				fmt.Fprintf(&sb, "%s\n", serr)
 			} else {
 				br := base64.StdEncoding.EncodeToString([]byte(""))
 				if r != nil {
 					br = base64.StdEncoding.EncodeToString(r)
 				}
 
-				// The final correct reply format.
-				reply = fmt.Sprintf("%v %v\n", CmdAck, br)
+				sb.Reset()
+				fmt.Fprintf(&sb, "%s %s\n", CmdAck, br)
 			}
 		}
 	}
 
-	b := []byte(reply)
+	b := []byte(sb.String())
 	conn.Write(b)
 }
 
 func doBroadcast(ctx context.Context, op *Op, conn net.Conn, msg string) {
-	reply := base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error())) + "\n"
+	var sb strings.Builder
+	serr := base64.StdEncoding.EncodeToString([]byte(ErrNoHandler.Error()))
+	fmt.Fprintf(&sb, "%s\n", serr)
 	if op.fnBroadcast != nil {
 		payload := strings.Split(msg, " ")[1]
 		decoded, _ := base64.StdEncoding.DecodeString(payload)
@@ -94,26 +104,29 @@ func doBroadcast(ctx context.Context, op *Op, conn net.Conn, msg string) {
 
 		r, e := op.fnBroadcast(data, decoded) // call broadcast handler
 		if e != nil {
-			reply = base64.StdEncoding.EncodeToString([]byte(e.Error())) + "\n"
+			sb.Reset()
+			serr := base64.StdEncoding.EncodeToString([]byte(e.Error()))
+			fmt.Fprintf(&sb, "%s\n", serr)
 		} else {
 			br := base64.StdEncoding.EncodeToString([]byte(""))
 			if r != nil {
 				br = base64.StdEncoding.EncodeToString(r)
 			}
 
-			// The final correct reply format.
-			reply = fmt.Sprintf("%v %v\n", CmdAck, br)
+			sb.Reset()
+			fmt.Fprintf(&sb, "%s %s\n", CmdAck, br)
 		}
 	}
 
-	b := []byte(reply)
+	b := []byte(sb.String())
 	conn.Write(b)
 }
 
 func doHeartbeat(ctx context.Context, op *Op, conn net.Conn, msg string) {
+	var sb strings.Builder
 	op.addMember(strings.Split(msg, " ")[1])
-	reply := op.encodeMembers() + "\n"
-	conn.Write([]byte(reply))
+	fmt.Fprintf(&sb, "%s\n", op.encodeMembers())
+	conn.Write([]byte(sb.String()))
 }
 
 func doMembers(ctx context.Context, op *Op, conn net.Conn, msg string) {
@@ -252,6 +265,12 @@ func handleMsg(ctx context.Context, op *Op, conn net.Conn) {
 		CmdSemRelease + " ": doReleaseSemaphore, // release semaphore (we are leader)
 	}
 
+	addSpace := func(s string) string {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%s ", s)
+		return sb.String()
+	}
+
 	for {
 		var prefix string
 		msg, err := op.recv(conn)
@@ -266,22 +285,22 @@ func handleMsg(ctx context.Context, op *Op, conn net.Conn) {
 			return
 		case strings.HasPrefix(msg, CmdLeader):
 			prefix = CmdLeader
-		case strings.HasPrefix(msg, CmdWrite+" "):
-			prefix = CmdWrite + " "
-		case strings.HasPrefix(msg, CmdSend+" "):
-			prefix = CmdSend + " "
-		case strings.HasPrefix(msg, CmdBroadcast+" "):
-			prefix = CmdBroadcast + " "
-		case strings.HasPrefix(msg, CmdPing+" "):
-			prefix = CmdPing + " "
-		case strings.HasPrefix(msg, CmdMembers+" "):
-			prefix = CmdMembers + " "
-		case strings.HasPrefix(msg, CmdSemaphore+" "):
-			prefix = CmdSemaphore + " "
-		case strings.HasPrefix(msg, CmdSemAcquire+" "):
-			prefix = CmdSemAcquire + " "
-		case strings.HasPrefix(msg, CmdSemRelease+" "):
-			prefix = CmdSemRelease + " "
+		case strings.HasPrefix(msg, addSpace(CmdWrite)):
+			prefix = addSpace(CmdWrite)
+		case strings.HasPrefix(msg, addSpace(CmdSend)):
+			prefix = addSpace(CmdSend)
+		case strings.HasPrefix(msg, addSpace(CmdBroadcast)):
+			prefix = addSpace(CmdBroadcast)
+		case strings.HasPrefix(msg, addSpace(CmdPing)):
+			prefix = addSpace(CmdPing)
+		case strings.HasPrefix(msg, addSpace(CmdMembers)):
+			prefix = addSpace(CmdMembers)
+		case strings.HasPrefix(msg, addSpace(CmdSemaphore)):
+			prefix = addSpace(CmdSemaphore)
+		case strings.HasPrefix(msg, addSpace(CmdSemAcquire)):
+			prefix = addSpace(CmdSemAcquire)
+		case strings.HasPrefix(msg, addSpace(CmdSemRelease)):
+			prefix = addSpace(CmdSemRelease)
 		default:
 			return // do nothing
 		}
