@@ -477,32 +477,36 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 //	limit > 0  --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
 	ret := []KeyValue{}
-	query := `select key, value, timestamp
-from ` + op.logTable + `
-where key = @key and timestamp is not null
-order by timestamp desc limit 1`
+	var q strings.Builder
+	fmt.Fprintf(&q, "select key, value, timestamp ")
+	fmt.Fprintf(&q, "from %s ", op.logTable)
+	fmt.Fprintf(&q, "where key = @key and timestamp is not null ")
+	fmt.Fprintf(&q, "order by timestamp desc limit 1")
 
 	if len(limit) > 0 {
 		switch {
 		case limit[0] > 0:
-			query = `"select key, value, timestamp
-from ` + op.logTable + `
-where key = @key and timestamp is not null
-order by timestamp desc limit ` + fmt.Sprintf("%v", limit[0])
+			q.Reset()
+			fmt.Fprintf(&q, "select key, value, timestamp ")
+			fmt.Fprintf(&q, "from %s ", op.logTable)
+			fmt.Fprintf(&q, "where key = @key and timestamp is not null ")
+			fmt.Fprintf(&q, "order by timestamp desc limit %v", limit[0])
 		case limit[0] == -1:
-			query = `"select key, value, timestamp
-from ` + op.logTable + `
-where key = @key and timestamp is not null
-order by timestamp desc`
+			q.Reset()
+			fmt.Fprintf(&q, "select key, value, timestamp ")
+			fmt.Fprintf(&q, "from %s ", op.logTable)
+			fmt.Fprintf(&q, "where key = @key and timestamp is not null ")
+			fmt.Fprintf(&q, "order by timestamp desc")
 		case limit[0] == -2:
-			query = `"select key, value, timestamp
-from ` + op.logTable + `
-where key = @key and timestamp is not null
-order by timestamp limit 1`
+			q.Reset()
+			fmt.Fprintf(&q, "select key, value, timestamp ")
+			fmt.Fprintf(&q, "from %s ", op.logTable)
+			fmt.Fprintf(&q, "where key = @key and timestamp is not null ")
+			fmt.Fprintf(&q, "order by timestamp limit 1")
 		}
 	}
 
-	stmt := spanner.Statement{SQL: query, Params: map[string]interface{}{"key": key}}
+	stmt := spanner.Statement{SQL: q.String(), Params: map[string]interface{}{"key": key}}
 	iter := op.spannerClient.Single().Query(ctx, stmt)
 	defer iter.Stop()
 	for {
