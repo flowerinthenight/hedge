@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	cloud.google.com/go/spanner v1.45.1
-	github.com/flowerinthenight/spindle v1.1.7
+	github.com/flowerinthenight/spindle v1.2.0
 	github.com/google/uuid v1.3.0
 	github.com/googleapis/gax-go/v2 v2.8.0
 	github.com/hashicorp/memberlist v0.5.0
