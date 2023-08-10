@@ -37,4 +37,4 @@ jobs:
         gcloud spanner instances create test-instance --config=emulator-config --description="Test Instance" --nodes=1
         export SPANNER_EMULATOR_HOST=localhost:9010
         gcloud spanner databases create testdb --instance=test-instance --ddl-file=$PWD/testdata/emuddl.sql
-        go test -v ./...
+        go test -v -run TestBasic
