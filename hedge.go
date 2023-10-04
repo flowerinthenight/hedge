@@ -714,6 +714,17 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 	return outs
 }
 
+// Members returns a list of members in the cluster/group.
+func (op *Op) Members() []string {
+	members := []string{}
+	m := op.getMembers()
+	for k := range m {
+		members = append(members, k)
+	}
+
+	return members
+}
+
 func (op *Op) send(conn net.Conn, msg string) (string, error) {
 	if conn == nil {
 		return "", ErrInvalidConn
