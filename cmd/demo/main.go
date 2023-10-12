@@ -22,7 +22,7 @@ var (
 	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
 	lockName     = flag.String("lockname", "hedge-demo-group", "lock name, common to all instances")
 	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
-	logTable     = flag.String("logtable", "testhedge_log", "the table for our log data")
+	logTable     = flag.String("logtable", "", "the table for our log data (optional)")
 )
 
 func main() {
