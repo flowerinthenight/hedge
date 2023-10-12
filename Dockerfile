@@ -1,4 +1,4 @@
-FROM golang:1.20.4-bullseye
+FROM golang:1.21.3-bookworm
 COPY . /go/src/github.com/flowerinthenight/hedge/
 WORKDIR /go/src/github.com/flowerinthenight/hedge/cmd/demo/
 RUN CGO_ENABLED=0 GOOS=linux go build -v -trimpath -installsuffix cgo -o hedge .
