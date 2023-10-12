@@ -409,26 +409,26 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, l
 	return err
 }
 
-type ensure_t struct {
+type ensureT struct {
 	sync.Mutex
 	m map[string]struct{}
 }
 
-func ensureLock() *ensure_t { return &ensure_t{m: make(map[string]struct{})} }
+func ensureLock() *ensureT { return &ensureT{m: make(map[string]struct{})} }
 
-func (e *ensure_t) add(name string) {
+func (e *ensureT) add(name string) {
 	e.Lock()
 	defer e.Unlock()
 	e.m[name] = struct{}{}
 }
 
-func (e *ensure_t) del(name string) {
+func (e *ensureT) del(name string) {
 	e.Lock()
 	defer e.Unlock()
 	delete(e.m, name)
 }
 
-func (e *ensure_t) exists(name string) bool {
+func (e *ensureT) exists(name string) bool {
 	e.Lock()
 	defer e.Unlock()
 	_, ok := e.m[name]

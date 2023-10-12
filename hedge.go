@@ -212,7 +212,6 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	}{
 		{"SpindleTable", op.lockTable},
 		{"SpindleLockName", op.lockName},
-		{"LogTable", op.logTable},
 	} {
 		if v.val == "" {
 			err = fmt.Errorf("hedge: %v cannot be empty", v.name)
@@ -430,6 +429,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 // NewSemaphore returns a distributed semaphore object.
 func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaphore, error) {
+	if op.logTable == "" {
+		return nil, ErrNotSupported
+	}
+
 	if atomic.LoadInt32(&op.active) != 1 {
 		return nil, ErrNotRunning
 	}
@@ -476,6 +479,10 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 //	limit = -2 --> oldest version only
 //	limit > 0  --> items behind latest; 3 means latest + 2 versions behind, [0]=latest
 func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, error) {
+	if op.logTable == "" {
+		return nil, ErrNotSupported
+	}
+
 	ret := []KeyValue{}
 	var q strings.Builder
 	fmt.Fprintf(&q, "select key, value, timestamp ")
@@ -548,6 +555,10 @@ type PutOptions struct {
 // Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
 // timeout, to wait for the leader's availability to do actual writes before returning.
 func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
+	if op.logTable == "" {
+		return ErrNotSupported
+	}
+
 	var err error
 	var direct, noappend, hl bool
 	if len(po) > 0 {
@@ -888,7 +899,8 @@ func (op *Op) delMember(id string) {
 // New creates an instance of Op. hostPort can be in "ip:port" format, or ":port" format, in which case
 // the IP part will be resolved internally, or empty, in which case port 8080 will be used. The internal
 // spindle object's lock table name will be lockTable, and lockName is the lock name. logTable will
-// serve as our append-only, distributed key/value storage table.
+// serve as our append-only, distributed key/value storage table. If logTable is empty, Put, Get, and
+// Semaphore features will be disabled.
 func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string, opts ...Option) *Op {
 	op := &Op{
 		hostPort:      hostPort,
