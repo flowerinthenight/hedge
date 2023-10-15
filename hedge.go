@@ -659,9 +659,9 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 }
 
 type BroadcastOutput struct {
-	Id    string
-	Reply []byte
-	Error error
+	Id    string `json:"id,omitempty"`
+	Reply []byte `json:"reply,omitempty"`
+	Error error  `json:"error,omitempty"`
 }
 
 type BroadcastArgs struct {
