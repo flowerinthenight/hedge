@@ -182,7 +182,7 @@ func main() {
 
 		outs := []string{}
 		log.Printf("broadcast %q msg to all...", msg)
-		stream := true
+		stream := false
 		if stream {
 			ch := make(chan hedge.BroadcastOutput)
 			go op.Broadcast(context.Background(), []byte(msg), hedge.BroadcastArgs{Out: ch})
