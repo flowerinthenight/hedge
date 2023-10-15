@@ -664,22 +664,39 @@ type BroadcastOutput struct {
 	Error error
 }
 
-// Broadcast sends msg to all nodes (send to all). Any node can broadcast
-// messages, including the leader itself. Note that this is best-effort
-// basis only; by the time you call this API, the handler might not have
-// all the active members in record yet, as is the usual situation with
-// k8s deployments, where pods come and go, and our internal heartbeat
-// protocol hasn't been completed yet. This call will also block until it
-// receives all the reply from all nodes' broadcast handlers.
-func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
+type BroadcastArgs struct {
+	Out chan BroadcastOutput
+}
+
+// Broadcast sends msg to all nodes (send to all). Any node can broadcast messages, including the
+// leader itself. Note that this is best-effort basis only; by the time you call this API, the
+// handler might not have all the active members in record yet, as is the usual situation with
+// k8s deployments, where pods come and go, and our internal heartbeat protocol hasn't been
+// completed yet. This call will also block until it receives all the reply from all nodes'
+// broadcast handlers.
+//
+// If args[].Out is set, the output will be streamed to that channel instead. Useful if you prefer
+// a streamed output (as reply comes) instead of waiting for all replies before returning. If set,
+// the return value (output slice) will be set to empty []. Also, close() will be called on the
+// Out channel to indicate streaming end.
+func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) []BroadcastOutput {
 	if atomic.LoadInt32(&op.active) != 1 || op.fnBroadcast == nil {
 		return nil // not running or no broadcast support
 	}
 
+	var stream bool
 	outs := []BroadcastOutput{}
 	var w sync.WaitGroup
+	var outch chan BroadcastOutput
 	members := op.getMembers()
-	outch := make(chan BroadcastOutput, len(members))
+	switch {
+	case len(args) > 0 && args[0].Out != nil:
+		outch = args[0].Out
+		stream = true
+	default:
+		outch = make(chan BroadcastOutput, len(members))
+	}
+
 	for k := range members {
 		w.Add(1)
 		go func(id string) {
@@ -718,8 +735,13 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte) []BroadcastOutput {
 	}
 
 	w.Wait()
-	for range members {
-		outs = append(outs, <-outch)
+	switch {
+	case stream:
+		close(args[0].Out)
+	default:
+		for range members {
+			outs = append(outs, <-outch)
+		}
 	}
 
 	return outs

@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -108,7 +108,7 @@ func main() {
 		var key, value string
 
 		// For /put, we expect a fmt: "key value"
-		b, _ := ioutil.ReadAll(r.Body)
+		b, _ := io.ReadAll(r.Body)
 		defer r.Body.Close()
 		if len(string(b)) > 0 {
 			ss := strings.Split(string(b), " ")
@@ -138,7 +138,7 @@ func main() {
 
 	mux.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
-		b, _ := ioutil.ReadAll(r.Body)
+		b, _ := io.ReadAll(r.Body)
 		defer r.Body.Close()
 		v, err := op.Get(ctx, string(b))
 		if err != nil {
@@ -153,7 +153,7 @@ func main() {
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
 		msg := "hello" // default
-		b, _ := ioutil.ReadAll(r.Body)
+		b, _ := io.ReadAll(r.Body)
 		defer r.Body.Close()
 		if len(string(b)) > 0 {
 			msg = string(b)
@@ -174,7 +174,7 @@ func main() {
 	mux.HandleFunc("/broadcast", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
 		msg := "hello" // default
-		b, _ := ioutil.ReadAll(r.Body)
+		b, _ := io.ReadAll(r.Body)
 		defer r.Body.Close()
 		if len(string(b)) > 0 {
 			msg = string(b)
@@ -182,14 +182,29 @@ func main() {
 
 		outs := []string{}
 		log.Printf("broadcast %q msg to all...", msg)
-		vv := op.Broadcast(context.Background(), []byte(msg))
-		for _, v := range vv {
-			if v.Error != nil {
-				out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, v.Error.Error())
-				outs = append(outs, out)
-			} else {
-				out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, string(v.Reply))
-				outs = append(outs, out)
+		stream := true
+		if stream {
+			ch := make(chan hedge.BroadcastOutput)
+			go op.Broadcast(context.Background(), []byte(msg), hedge.BroadcastArgs{Out: ch})
+			for v := range ch {
+				if v.Error != nil {
+					out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, v.Error.Error())
+					outs = append(outs, out)
+				} else {
+					out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, string(v.Reply))
+					outs = append(outs, out)
+				}
+			}
+		} else {
+			vv := op.Broadcast(context.Background(), []byte(msg))
+			for _, v := range vv {
+				if v.Error != nil {
+					out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, v.Error.Error())
+					outs = append(outs, out)
+				} else {
+					out := fmt.Sprintf("broadcast: sender=%v, reply=%v", hostname, string(v.Reply))
+					outs = append(outs, out)
+				}
 			}
 		}
 
