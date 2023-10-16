@@ -655,7 +655,8 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	}
 
 	// If not ACK, then the whole reply is an error string.
-	return base64.StdEncoding.DecodeString(reply)
+	b, _ := base64.StdEncoding.DecodeString(reply)
+	return nil, fmt.Errorf(string(b))
 }
 
 type BroadcastOutput struct {
