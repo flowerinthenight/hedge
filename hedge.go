@@ -666,7 +666,8 @@ type BroadcastOutput struct {
 }
 
 type BroadcastArgs struct {
-	Out chan BroadcastOutput
+	SkipSelf bool // if true, skip broadcasting to self
+	Out      chan BroadcastOutput
 }
 
 // Broadcast sends msg to all nodes (send to all). Any node can broadcast messages, including the
@@ -690,6 +691,10 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 	var w sync.WaitGroup
 	var outch chan BroadcastOutput
 	members := op.getMembers()
+	if len(args) > 0 && args[0].SkipSelf {
+		delete(members, op.Name())
+	}
+
 	switch {
 	case len(args) > 0 && args[0].Out != nil:
 		outch = args[0].Out
