@@ -78,18 +78,22 @@ go op.Run(ctx, done)
 
 // For storage, any pod should be able to call op.Put(...) or op.Get(...) here.
 //
-// Any pod can call HasLock() here at any given time to know whether they are leader or not.
+// Any pod can call HasLock() here at any given time to know whether they are
+// leader or not.
+//
 //   hl, _ := op.HasLock()
 //   if hl {
 //     log.Println("leader here!")
 //   }
 //
-// Calling op.Send(...) will be handled by the leader through the WithLeaderHandler callback.
+// To send a message to the current leader, any pod can call op.Send(...) and
+// the leader will handle it through the WithLeaderHandler callback.
 //
-// For broadcast, any pod can call op.Broadcast(...) here which will be handled by each
-//   pod's WithBroadcastHandler callback, including the caller.
+// For broadcast, any pod can call op.Broadcast(...) here which will be handled
+// by each pod's WithBroadcastHandler callback, including the caller.
 //
 // For distributed semaphore, any pod can call the following:
+//
 //   sem, _ := op.NewSemaphore(ctx, "semaphore-name", 2)
 //   sem.Acquire(ctx)
 //   ...
