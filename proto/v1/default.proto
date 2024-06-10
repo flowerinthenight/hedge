@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package hedge.proto.v1;
+
+option go_package = "github.com/flowerinthenight/hedge/proto/v1";
+
+service Hedge {
+  rpc Hello(HelloRequest) returns (HelloResponse) {}
+}
+
+message HelloRequest {}
+
+message HelloResponse {
+  string response = 1;
+}
