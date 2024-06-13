@@ -107,7 +107,7 @@ cancel()
 <-done
 ```
 
-A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner permissions.
+A sample [deployment](./deployment_template.yaml) file for GKE is provided, although it needs a fair bit of editing (for auth) to be usable. It uses [Workload Identity Federation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) for authentication although you can update it to use other authentication methods as well. The service account needs to have Spanner permissions.
 
 Once deployed, you can do the following tests while checking the logs. We will use [kubepfm](https://github.com/flowerinthenight/kubepfm) to port-forward our test commands to the server.
 
