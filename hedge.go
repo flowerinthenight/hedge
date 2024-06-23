@@ -741,12 +741,13 @@ type StreamToLeaderOutput struct {
 	Out chan *StreamMessage `json:"out"`
 }
 
-// StreamToLeader returns an input and output channels for streaming to leader. To use the channels,
-// send your request message(s) to the input channel, close it (i.e. close(input)), then read the
-// replies from the output channel. This function will close the output channel when done.
+// StreamToLeader returns an input and output channels for streaming to leader.
+// To use the channels, send your request message(s) to the input channel, close
+// it (i.e. close(input)), then read the replies from the output channel. This
+// function will close the output channel when done.
 //
-// StreamToLeader is sequential in the sense that you need to send all your input messages first
-// before getting any response from the leader.
+// StreamToLeader is sequential in the sense that you need to send all your input
+// messages first before getting any response from the leader.
 func (op *Op) StreamToLeader(ctx context.Context) (*StreamToLeaderOutput, error) {
 	if op.leaderStreamIn == nil || op.leaderStreamOut == nil {
 		return nil, fmt.Errorf("hedge: input/output channel(s) cannot be nil")
@@ -920,6 +921,17 @@ type StreamBroadcastOutput struct {
 	Outs map[string]chan *StreamMessage
 }
 
+// StreamToLeader returns input and output channels for doing streaming broadcasts. Any node can broadcast messages,
+// including the leader itself. Note that this is best-effort basis only; by the time you call this API, the handler
+// might not have all the active members in record yet, as is the usual situation with k8s deployments, where pods
+// come and go, and our internal heartbeat protocol hasn't been completed yet. This call will also block until it
+// receives all the reply from all nodes' broadcast handlers.
+//
+// To use the channels, send your request message(s) to the input channel, close it (i.e. close(input)), then read
+// the replies from the output channels. This function will close all output channels when done.
+//
+// StreamBroadcast is sequential in the sense that you need to send all your input messages first before getting
+// any response from all the nodes.
 func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) (*StreamBroadcastOutput, error) {
 	if atomic.LoadInt32(&op.active) != 1 {
 		return nil, nil // not running
