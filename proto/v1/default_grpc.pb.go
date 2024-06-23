@@ -18,7 +18,8 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type HedgeClient interface {
-	Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
+	Send(ctx context.Context, opts ...grpc.CallOption) (Hedge_SendClient, error)
+	Broadcast(ctx context.Context, opts ...grpc.CallOption) (Hedge_BroadcastClient, error)
 }
 
 type hedgeClient struct {
@@ -29,20 +30,74 @@ func NewHedgeClient(cc grpc.ClientConnInterface) HedgeClient {
 	return &hedgeClient{cc}
 }
 
-func (c *hedgeClient) Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error) {
-	out := new(HelloResponse)
-	err := c.cc.Invoke(ctx, "/hedge.proto.v1.Hedge/Hello", in, out, opts...)
+func (c *hedgeClient) Send(ctx context.Context, opts ...grpc.CallOption) (Hedge_SendClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[0], "/hedge.proto.v1.Hedge/Send", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &hedgeSendClient{stream}
+	return x, nil
+}
+
+type Hedge_SendClient interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ClientStream
+}
+
+type hedgeSendClient struct {
+	grpc.ClientStream
+}
+
+func (x *hedgeSendClient) Send(m *Payload) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *hedgeSendClient) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *hedgeClient) Broadcast(ctx context.Context, opts ...grpc.CallOption) (Hedge_BroadcastClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[1], "/hedge.proto.v1.Hedge/Broadcast", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &hedgeBroadcastClient{stream}
+	return x, nil
+}
+
+type Hedge_BroadcastClient interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ClientStream
+}
+
+type hedgeBroadcastClient struct {
+	grpc.ClientStream
+}
+
+func (x *hedgeBroadcastClient) Send(m *Payload) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *hedgeBroadcastClient) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // HedgeServer is the server API for Hedge service.
 // All implementations must embed UnimplementedHedgeServer
 // for forward compatibility
 type HedgeServer interface {
-	Hello(context.Context, *HelloRequest) (*HelloResponse, error)
+	Send(Hedge_SendServer) error
+	Broadcast(Hedge_BroadcastServer) error
 	mustEmbedUnimplementedHedgeServer()
 }
 
@@ -50,8 +105,11 @@ type HedgeServer interface {
 type UnimplementedHedgeServer struct {
 }
 
-func (UnimplementedHedgeServer) Hello(context.Context, *HelloRequest) (*HelloResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Hello not implemented")
+func (UnimplementedHedgeServer) Send(Hedge_SendServer) error {
+	return status.Errorf(codes.Unimplemented, "method Send not implemented")
+}
+func (UnimplementedHedgeServer) Broadcast(Hedge_BroadcastServer) error {
+	return status.Errorf(codes.Unimplemented, "method Broadcast not implemented")
 }
 func (UnimplementedHedgeServer) mustEmbedUnimplementedHedgeServer() {}
 
@@ -66,22 +124,56 @@ func RegisterHedgeServer(s grpc.ServiceRegistrar, srv HedgeServer) {
 	s.RegisterService(&Hedge_ServiceDesc, srv)
 }
 
-func _Hedge_Hello_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HelloRequest)
-	if err := dec(in); err != nil {
+func _Hedge_Send_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HedgeServer).Send(&hedgeSendServer{stream})
+}
+
+type Hedge_SendServer interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ServerStream
+}
+
+type hedgeSendServer struct {
+	grpc.ServerStream
+}
+
+func (x *hedgeSendServer) Send(m *Payload) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *hedgeSendServer) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(HedgeServer).Hello(ctx, in)
+	return m, nil
+}
+
+func _Hedge_Broadcast_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HedgeServer).Broadcast(&hedgeBroadcastServer{stream})
+}
+
+type Hedge_BroadcastServer interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ServerStream
+}
+
+type hedgeBroadcastServer struct {
+	grpc.ServerStream
+}
+
+func (x *hedgeBroadcastServer) Send(m *Payload) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *hedgeBroadcastServer) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
 	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/hedge.proto.v1.Hedge/Hello",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HedgeServer).Hello(ctx, req.(*HelloRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return m, nil
 }
 
 // Hedge_ServiceDesc is the grpc.ServiceDesc for Hedge service.
@@ -90,12 +182,20 @@ func _Hedge_Hello_Handler(srv interface{}, ctx context.Context, dec func(interfa
 var Hedge_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "hedge.proto.v1.Hedge",
 	HandlerType: (*HedgeServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "Hello",
-			Handler:    _Hedge_Hello_Handler,
+			StreamName:    "Send",
+			Handler:       _Hedge_Send_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Broadcast",
+			Handler:       _Hedge_Broadcast_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "default.proto",
 }

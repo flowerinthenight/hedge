@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
+	protov1 "github.com/flowerinthenight/hedge/proto/v1"
 )
 
 var (
@@ -27,12 +29,29 @@ var (
 
 func main() {
 	flag.Parse()
-	rand.Seed(time.Now().UnixNano())
-	client, err := spanner.NewClient(context.Background(), *dbstr)
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := spanner.NewClient(ctx, *dbstr)
 	if err != nil {
-		log.Println(err)
+		slog.Error("NewClient failed:", "err", err)
 		return
 	}
+
+	in := make(chan *hedge.StreamMessage)
+	out := make(chan *hedge.StreamMessage)
+	go func(_ctx context.Context) {
+		for {
+			select {
+			case <-_ctx.Done():
+				return
+			case m := <-in:
+				b, _ := json.Marshal(m)
+				slog.Info("input stream:", "val", string(b))
+				out <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("one")}}
+				out <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("two")}}
+				out <- nil // end
+			}
+		}
+	}(context.WithValue(ctx, struct{}{}, nil))
 
 	defer client.Close()
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
@@ -95,10 +114,10 @@ func main() {
 				// return nil, nil
 			},
 		),
+		hedge.WithLeaderStreamChannels(in, out),
 	)
 
 	log.Println(op)
-	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go op.Run(ctx, done)
 
@@ -171,6 +190,22 @@ func main() {
 		w.Write([]byte(out))
 	})
 
+	mux.HandleFunc("/streamsend", func(w http.ResponseWriter, r *http.Request) {
+		in, out, err := op.StreamToLeader(context.Background())
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		in <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
+		close(in) // we're done with input
+		for m := range out {
+			slog.Info("reply:", "out", string(m.Payload.Data))
+		}
+
+		w.Write([]byte("OK"))
+	})
+
 	mux.HandleFunc("/broadcast", func(w http.ResponseWriter, r *http.Request) {
 		hostname, _ := os.Hostname()
 		msg := "hello" // default
@@ -211,7 +246,7 @@ func main() {
 		w.Write([]byte(strings.Join(outs, "\n")))
 	})
 
-	s := &http.Server{Addr: ":8081", Handler: mux}
+	s := &http.Server{Addr: ":9090", Handler: mux}
 	go s.ListenAndServe()
 
 	// Interrupt handler.

@@ -5,11 +5,11 @@ package hedge.proto.v1;
 option go_package = "github.com/flowerinthenight/hedge/proto/v1";
 
 service Hedge {
-  rpc Hello(HelloRequest) returns (HelloResponse) {}
+  rpc Send(stream Payload) returns (stream Payload) {}
+  rpc Broadcast(stream Payload) returns (stream Payload) {}
 }
 
-message HelloRequest {}
-
-message HelloResponse {
-  string response = 1;
+message Payload {
+  map<string, string> meta = 1;
+  bytes data = 2;
 }

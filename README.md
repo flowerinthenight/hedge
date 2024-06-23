@@ -115,33 +115,33 @@ Test the `Put()` API:
 
 ```sh
 # Open a terminal and run:
-$ kubepfm --target deployment/hedgedemo:8081:8081
+$ kubepfm --target deployment/hedgedemo:9090:9090
 
 # Open another terminal and run:
-$ curl localhost:8081/put -d "samplekey samplevalue"
+$ curl localhost:9090/put -d "samplekey samplevalue"
 
 # To ensure a non-leader sender, you can also specify a
 # non-leader pod for the kubepfm command above:
-$ kubepfm --target hedgedemo-6b5bcd4998-n95n7:8081:8081
+$ kubepfm --target hedgedemo-6b5bcd4998-n95n7:9090:9090
 ```
 
 Test the `Get()` API:
 
 ```sh
 # While kubepfm is running on a different terminal, run:
-$ curl localhost:8081/get -d "samplekey"
+$ curl localhost:9090/get -d "samplekey"
 ```
 
 Test the `Send()` API:
 
 ```sh
 # While kubepfm is running on a different terminal, run:
-$ curl localhost:8081/send -d "hello-world"
+$ curl localhost:9090/send -d "hello-world"
 ```
 
 Test the `Broadcast()` API:
 
 ```sh
 # While kubepfm is running on a different terminal, run:
-$ curl localhost:8081/broadcast -d "hello-all"
+$ curl localhost:9090/broadcast -d "hello-all"
 ```

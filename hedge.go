@@ -6,19 +6,25 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/spanner"
+	protov1 "github.com/flowerinthenight/hedge/proto/v1"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
 	"github.com/hashicorp/memberlist"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
 )
 
 const (
@@ -143,9 +149,42 @@ func (w withLogger) Apply(op *Op) { op.logger = w.l }
 //	log.New(ioutil.Discard, "", 0)
 func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
+type withGrpcHostPort string
+
+func (w withGrpcHostPort) Apply(op *Op) { op.grpcHostPort = string(w) }
+
+// WithGrpcHostPort sets Op's internal grpc host/port address.
+// Defaults to the internal TCP host:port+1.
+func WithGrpcHostPort(v string) Option { return withGrpcHostPort(v) }
+
+type StreamMessage struct {
+	Payload *protov1.Payload
+	Error   error
+}
+
+type withLeaderStreamChannels struct {
+	in  chan *StreamMessage
+	out chan *StreamMessage
+}
+
+func (w withLeaderStreamChannels) Apply(op *Op) {
+	op.streamIn = w.in
+	op.streamOut = w.out
+}
+
+// WithLeaderStreamChannels sets the streaming input and output channels for sending
+// streaming messages to the leader. All incoming stream messages to the leader will
+// be sent to the `in` channel. A nil message indicates the end of the streaming data.
+// After sending all messages to `in`, the handler will then listen to the `out` channel
+// for reply messages. A nil message indicates the end of the reply stream.
+func WithLeaderStreamChannels(in chan *StreamMessage, out chan *StreamMessage) Option {
+	return withLeaderStreamChannels{in, out}
+}
+
 // Op is our main instance for hedge operations.
 type Op struct {
 	hostPort      string          // this instance's id; address:port
+	grpcHostPort  string          // default is host:port+1 (from `hostPort`)
 	spannerClient *spanner.Client // both for spindle and hedge
 	lockTable     string          // spindle lock table
 	lockName      string          // spindle lock name
@@ -156,6 +195,8 @@ type Op struct {
 	fnLdrData   interface{}  // arbitrary data passed to fnLeader
 	fnBroadcast FnMsgHandler // broadcast message handler
 	fnBcData    interface{}  // arbitrary data passed to fnBroadcast
+	streamIn    chan *StreamMessage
+	streamOut   chan *StreamMessage
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
@@ -225,19 +266,19 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		return err
 	}
 
-	listener, err := net.ListenTCP("tcp", addr)
+	tl, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	defer listener.Close()
+	defer tl.Close()
 	op.logger.Printf("tcp: listen on %v", op.hostPort)
 
 	go func() {
 		for {
-			conn, err := listener.Accept()
+			conn, err := tl.Accept()
 			if err != nil {
-				op.logger.Printf("listener.Accept failed: %v", err)
+				op.logger.Printf("Accept failed: %v", err)
 				return
 			}
 
@@ -249,6 +290,20 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			go handleMsg(ctx, op, conn)
 		}
 	}()
+
+	gl, err := net.Listen("tcp", op.grpcHostPort)
+	if err != nil {
+		return err
+	}
+
+	defer gl.Close()
+	op.logger.Printf("grpc: listen on %v", op.grpcHostPort)
+
+	gs := grpc.NewServer()
+	svc := &service{op: op}
+	protov1.RegisterHedgeServer(gs, svc)
+	reflection.Register(gs) // register reflection service
+	go gs.Serve(gl)
 
 	// Setup and start our internal spindle object.
 	op.Lock = spindle.New(
@@ -419,6 +474,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 	<-ctx.Done() // wait for termination
 
+	gs.GracefulStop() // stop grpc server
 	if atomic.LoadInt32(&op.ensureOn) == 1 {
 		op.ensureCancel() // stop semaphore checker;
 		<-op.ensureDone   // and wait
@@ -659,6 +715,79 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	return nil, fmt.Errorf(string(b))
 }
 
+// StreamToLeader returns an input and output channels for streaming to leader. To use the channels,
+// send your request message(s) to the input channel, close it (i.e. close(input)), then read the
+// replies from the output channel. This function will close the output channel when done.
+//
+// StreamToLeader is sequential in the sense that you need to send all your input messages first
+// before getting any response from the leader.
+func (op *Op) StreamToLeader(ctx context.Context) (chan *StreamMessage, chan *StreamMessage, error) {
+	if op.streamIn == nil || op.streamOut == nil {
+		return nil, nil, fmt.Errorf("hedge: input/output channel(s) cannot be nil")
+	}
+
+	conn, err := op.getLeaderGrpcConn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	client := protov1.NewHedgeClient(conn)
+	stream, err := client.Send(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	keyId := "id"
+	id := uuid.NewString()
+	in := make(chan *StreamMessage)
+	out := make(chan *StreamMessage)
+	reply := make(chan error)
+	go func() {
+		var err error
+		for m := range in {
+			if m.Payload.Meta == nil {
+				m.Payload.Meta = map[string]string{keyId: id}
+			} else {
+				if _, ok := m.Payload.Meta[keyId]; !ok {
+					m.Payload.Meta[keyId] = id
+				}
+			}
+
+			err = stream.Send(m.Payload)
+			if err != nil {
+				break
+			}
+		}
+
+		stream.CloseSend()
+		reply <- err
+	}()
+
+	go func() {
+		defer func() {
+			close(out)
+			conn.Close()
+		}()
+
+		err := <-reply
+		if err != nil {
+			out <- &StreamMessage{Error: err}
+			return
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+
+			out <- &StreamMessage{Payload: resp}
+		}
+	}()
+
+	return in, out, nil
+}
+
 type BroadcastOutput struct {
 	Id    string `json:"id,omitempty"`
 	Reply []byte `json:"reply,omitempty"`
@@ -888,6 +1017,80 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
+// Don't forget to close the returned connection.
+func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
+	var conn *grpc.ClientConn
+	var err error
+	subctx := context.WithValue(ctx, struct{}{}, nil)
+	first := make(chan struct{}, 1)
+	first <- struct{}{} // immediately the first time
+	tcnt, tlimit := int64(0), (op.lockTimeout/2000)*2
+	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
+	defer ticker.Stop()
+
+	var active int32
+	getConn := func() (*grpc.ClientConn, error) {
+		atomic.StoreInt32(&active, 1)
+		defer atomic.StoreInt32(&active, 0)
+		leader, err := op.Leader()
+		if err != nil {
+			return nil, err
+		}
+
+		if leader == "" {
+			return nil, ErrNoLeader
+		}
+
+		h, _, _ := net.SplitHostPort(leader)
+		_, gp, _ := net.SplitHostPort(op.grpcHostPort)
+		gleader := net.JoinHostPort(h, gp)
+
+		var opts []grpc.DialOption
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		lconn, err := grpc.NewClient(gleader, opts...)
+		if err != nil {
+			return nil, err
+		}
+
+		return lconn, nil
+	}
+
+	type connT struct {
+		conn *grpc.ClientConn
+		err  error
+	}
+
+	for {
+		select {
+		case <-subctx.Done():
+			return nil, context.Canceled
+		case <-first:
+		case <-ticker.C:
+		}
+
+		if atomic.LoadInt32(&active) == 1 {
+			continue
+		}
+
+		ch := make(chan connT, 1)
+		go func() {
+			c, e := getConn()
+			ch <- connT{c, e}
+		}()
+
+		res := <-ch
+		conn = res.conn
+		err = res.err
+
+		tcnt++
+		if err == nil || (tcnt > tlimit) {
+			break
+		}
+	}
+
+	return conn, nil
+}
+
 func (op *Op) getMembers() map[string]struct{} {
 	op.mtx.Lock()
 	copy := make(map[string]struct{})
@@ -962,6 +1165,12 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		lh, _, _ := net.SplitHostPort(localNode.Address())
 		op.hostPort = net.JoinHostPort(lh, "8080")
 		list.Shutdown()
+	}
+
+	if op.grpcHostPort == "" {
+		host, port, _ := net.SplitHostPort(op.hostPort)
+		pi, _ := strconv.Atoi(port)
+		op.grpcHostPort = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
 	}
 
 	switch {
