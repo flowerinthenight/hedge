@@ -33,7 +33,7 @@ func (s *service) Send(hs protov1.Hedge_SendServer) error {
 				return
 			}
 
-			s.op.streamIn <- &StreamMessage{Payload: in}
+			s.op.leaderStreamIn <- &StreamMessage{Payload: in}
 		}
 	}()
 
@@ -47,7 +47,7 @@ func (s *service) Send(hs protov1.Hedge_SendServer) error {
 			default:
 			}
 
-			out := <-s.op.streamOut
+			out := <-s.op.leaderStreamOut
 			if out == nil {
 				return
 			}

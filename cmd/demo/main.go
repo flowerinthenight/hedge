@@ -191,15 +191,15 @@ func main() {
 	})
 
 	mux.HandleFunc("/streamsend", func(w http.ResponseWriter, r *http.Request) {
-		in, out, err := op.StreamToLeader(context.Background())
+		ret, err := op.StreamToLeader(context.Background())
 		if err != nil {
 			w.Write([]byte(err.Error()))
 			return
 		}
 
-		in <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
-		close(in) // we're done with input
-		for m := range out {
+		ret.In <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
+		close(ret.In) // we're done with input
+		for m := range ret.Out {
 			slog.Info("reply:", "out", string(m.Payload.Data))
 		}
 

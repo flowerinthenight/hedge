@@ -168,8 +168,8 @@ type withLeaderStreamChannels struct {
 }
 
 func (w withLeaderStreamChannels) Apply(op *Op) {
-	op.streamIn = w.in
-	op.streamOut = w.out
+	op.leaderStreamIn = w.in
+	op.leaderStreamOut = w.out
 }
 
 // WithLeaderStreamChannels sets the streaming input and output channels for sending
@@ -179,6 +179,25 @@ func (w withLeaderStreamChannels) Apply(op *Op) {
 // for reply messages. A nil message indicates the end of the reply stream.
 func WithLeaderStreamChannels(in chan *StreamMessage, out chan *StreamMessage) Option {
 	return withLeaderStreamChannels{in, out}
+}
+
+type withBroadcastStreamChannels struct {
+	in  chan *StreamMessage
+	out chan *StreamMessage
+}
+
+func (w withBroadcastStreamChannels) Apply(op *Op) {
+	op.broadcastStreamIn = w.in
+	op.broadcastStreamOut = w.out
+}
+
+// WithBroadcastStreamChannels sets the streaming input and output channels for broadcasting
+// messages to all nodes. All incoming stream messages will be sent to the `in` channel. A
+// nil message indicates the end of the streaming data. After sending all messages to `in`,
+// the handler will then listen to the `out` channel for reply messages. A nil message
+// indicates the end of the reply stream.
+func WithBroadcastStreamChannels(in chan *StreamMessage, out chan *StreamMessage) Option {
+	return withBroadcastStreamChannels{in, out}
 }
 
 // Op is our main instance for hedge operations.
@@ -191,12 +210,14 @@ type Op struct {
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
 
-	fnLeader    FnMsgHandler // leader message handler
-	fnLdrData   interface{}  // arbitrary data passed to fnLeader
-	fnBroadcast FnMsgHandler // broadcast message handler
-	fnBcData    interface{}  // arbitrary data passed to fnBroadcast
-	streamIn    chan *StreamMessage
-	streamOut   chan *StreamMessage
+	fnLeader           FnMsgHandler // leader message handler
+	fnLdrData          interface{}  // arbitrary data passed to fnLeader
+	fnBroadcast        FnMsgHandler // broadcast message handler
+	fnBcData           interface{}  // arbitrary data passed to fnBroadcast
+	leaderStreamIn     chan *StreamMessage
+	leaderStreamOut    chan *StreamMessage
+	broadcastStreamIn  chan *StreamMessage
+	broadcastStreamOut chan *StreamMessage
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
@@ -715,36 +736,44 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 	return nil, fmt.Errorf(string(b))
 }
 
+type StreamToLeaderOutput struct {
+	In  chan *StreamMessage
+	Out chan *StreamMessage
+}
+
 // StreamToLeader returns an input and output channels for streaming to leader. To use the channels,
 // send your request message(s) to the input channel, close it (i.e. close(input)), then read the
 // replies from the output channel. This function will close the output channel when done.
 //
 // StreamToLeader is sequential in the sense that you need to send all your input messages first
 // before getting any response from the leader.
-func (op *Op) StreamToLeader(ctx context.Context) (chan *StreamMessage, chan *StreamMessage, error) {
-	if op.streamIn == nil || op.streamOut == nil {
-		return nil, nil, fmt.Errorf("hedge: input/output channel(s) cannot be nil")
+func (op *Op) StreamToLeader(ctx context.Context) (*StreamToLeaderOutput, error) {
+	if op.leaderStreamIn == nil || op.leaderStreamOut == nil {
+		return nil, fmt.Errorf("hedge: input/output channel(s) cannot be nil")
 	}
 
 	conn, err := op.getLeaderGrpcConn(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	client := protov1.NewHedgeClient(conn)
 	stream, err := client.Send(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	keyId := "id"
 	id := uuid.NewString()
-	in := make(chan *StreamMessage)
-	out := make(chan *StreamMessage)
 	reply := make(chan error)
+	ret := StreamToLeaderOutput{
+		In:  make(chan *StreamMessage),
+		Out: make(chan *StreamMessage),
+	}
+
 	go func() {
 		var err error
-		for m := range in {
+		for m := range ret.In {
 			if m.Payload.Meta == nil {
 				m.Payload.Meta = map[string]string{keyId: id}
 			} else {
@@ -765,13 +794,13 @@ func (op *Op) StreamToLeader(ctx context.Context) (chan *StreamMessage, chan *St
 
 	go func() {
 		defer func() {
-			close(out)
+			close(ret.Out)
 			conn.Close()
 		}()
 
 		err := <-reply
 		if err != nil {
-			out <- &StreamMessage{Error: err}
+			ret.Out <- &StreamMessage{Error: err}
 			return
 		}
 
@@ -781,11 +810,11 @@ func (op *Op) StreamToLeader(ctx context.Context) (chan *StreamMessage, chan *St
 				return
 			}
 
-			out <- &StreamMessage{Payload: resp}
+			ret.Out <- &StreamMessage{Payload: resp}
 		}
 	}()
 
-	return in, out, nil
+	return &ret, nil
 }
 
 type BroadcastOutput struct {
@@ -881,6 +910,79 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 
 	return outs
 }
+
+type StreamBroadcastArgs struct {
+	SkipSelf bool // if true, skip broadcasting to self
+}
+
+type StreamBroadcastOutput struct {
+	In  chan *StreamMessage
+	Out chan *StreamMessage
+}
+
+// func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) (*StreamBroadcastOutput, error) {
+// 	if atomic.LoadInt32(&op.active) != 1 {
+// 		return nil, nil // not running
+// 	}
+
+// 	var stream bool
+// 	outs := []BroadcastOutput{}
+// 	var w sync.WaitGroup
+// 	var outch chan BroadcastOutput
+// 	members := op.getMembers()
+// 	if len(args) > 0 && args[0].SkipSelf {
+// 		delete(members, op.Name())
+// 	}
+
+// 	for k := range members {
+// 		w.Add(1)
+// 		go func(id string) {
+// 			defer w.Done()
+// 			timeout := time.Second * 5
+// 			conn, err := net.DialTimeout("tcp", id, timeout)
+// 			if err != nil {
+// 				outch <- BroadcastOutput{Id: id, Error: err}
+// 				return
+// 			}
+
+// 			defer conn.Close()
+// 			enc := base64.StdEncoding.EncodeToString(msg)
+// 			var sb strings.Builder
+// 			fmt.Fprintf(&sb, "%s %s\n", CmdBroadcast, enc)
+// 			reply, err := op.send(conn, sb.String())
+// 			if err != nil {
+// 				outch <- BroadcastOutput{Id: id, Error: err}
+// 				return
+// 			}
+
+// 			switch {
+// 			case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"
+// 				ss := strings.Split(reply, " ")
+// 				if len(ss) > 1 {
+// 					r, e := base64.StdEncoding.DecodeString(ss[1])
+// 					outch <- BroadcastOutput{Id: id, Reply: r, Error: e}
+// 					return
+// 				}
+// 			}
+
+// 			// If not ACK, then the whole reply is an error string.
+// 			r, _ := base64.StdEncoding.DecodeString(reply)
+// 			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf(string(r))}
+// 		}(k)
+// 	}
+
+// 	w.Wait()
+// 	switch {
+// 	case stream:
+// 		close(args[0].Out)
+// 	default:
+// 		for range members {
+// 			outs = append(outs, <-outch)
+// 		}
+// 	}
+
+// 	return outs
+// }
 
 // Members returns a list of members in the cluster/group.
 func (op *Op) Members() []string {
