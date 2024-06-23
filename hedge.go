@@ -956,14 +956,15 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 			continue
 		}
 
-		streams[k] = stream
-		ret.Outs[k] = make(chan *StreamMessage)
+		streams[gHostPort] = stream
+		ret.Outs[gHostPort] = make(chan *StreamMessage)
 	}
 
 	keyId := "id"
 	id := uuid.NewString()
 	reply := make(chan error)
 
+	// Exit only when input channel is closed by the caller.
 	go func() {
 		for m := range ret.In {
 			if m.Payload.Meta == nil {
@@ -986,6 +987,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 		reply <- nil
 	}()
 
+	// Exit only when all streaming responses from all nodes are done.
 	go func() {
 		defer func() {
 			for _, v := range ret.Outs {

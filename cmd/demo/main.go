@@ -64,8 +64,7 @@ func main() {
 			case <-_ctx.Done():
 				return
 			case m := <-bcastIn:
-				b, _ := json.Marshal(m)
-				slog.Info("input stream:", "val", string(b))
+				slog.Info("input stream:", "val", string(m.Payload.Data))
 				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("1_" + host)}}
 				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("2_" + host)}}
 				bcastOut <- nil // end
