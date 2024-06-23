@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,24 +37,42 @@ func main() {
 		return
 	}
 
-	in := make(chan *hedge.StreamMessage)
-	out := make(chan *hedge.StreamMessage)
+	defer client.Close()
+	ldrIn := make(chan *hedge.StreamMessage)
+	ldrOut := make(chan *hedge.StreamMessage)
 	go func(_ctx context.Context) {
 		for {
 			select {
 			case <-_ctx.Done():
 				return
-			case m := <-in:
+			case m := <-ldrIn:
 				b, _ := json.Marshal(m)
 				slog.Info("input stream:", "val", string(b))
-				out <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("one")}}
-				out <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("two")}}
-				out <- nil // end
+				ldrOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("one")}}
+				ldrOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("two")}}
+				ldrOut <- nil // end
 			}
 		}
 	}(context.WithValue(ctx, struct{}{}, nil))
 
-	defer client.Close()
+	bcastIn := make(chan *hedge.StreamMessage)
+	bcastOut := make(chan *hedge.StreamMessage)
+	host, _ := os.Hostname()
+	go func(_ctx context.Context) {
+		for {
+			select {
+			case <-_ctx.Done():
+				return
+			case m := <-bcastIn:
+				b, _ := json.Marshal(m)
+				slog.Info("input stream:", "val", string(b))
+				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("1_" + host)}}
+				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("2_" + host)}}
+				bcastOut <- nil // end
+			}
+		}
+	}(context.WithValue(ctx, struct{}{}, nil))
+
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithGroupSyncInterval(time.Second*5),
 		hedge.WithLeaderHandler(
@@ -114,7 +133,8 @@ func main() {
 				// return nil, nil
 			},
 		),
-		hedge.WithLeaderStreamChannels(in, out),
+		hedge.WithLeaderStreamChannels(ldrIn, ldrOut),
+		hedge.WithBroadcastStreamChannels(bcastIn, bcastOut),
 	)
 
 	log.Println(op)
@@ -244,6 +264,31 @@ func main() {
 		}
 
 		w.Write([]byte(strings.Join(outs, "\n")))
+	})
+
+	mux.HandleFunc("/streambroadcast", func(w http.ResponseWriter, r *http.Request) {
+		ret, err := op.StreamBroadcast(context.Background())
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		ret.In <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
+		close(ret.In) // we're done with input
+
+		var wg sync.WaitGroup
+		for k, v := range ret.Outs {
+			wg.Add(1)
+			go func(node string, ch chan *hedge.StreamMessage) {
+				defer wg.Done()
+				for m := range ch {
+					slog.Info("reply:", "node", node, "data", string(m.Payload.Data))
+				}
+			}(k, v)
+		}
+
+		wg.Wait()
+		w.Write([]byte("OK"))
 	})
 
 	s := &http.Server{Addr: ":9090", Handler: mux}

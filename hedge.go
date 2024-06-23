@@ -916,73 +916,110 @@ type StreamBroadcastArgs struct {
 }
 
 type StreamBroadcastOutput struct {
-	In  chan *StreamMessage
-	Out chan *StreamMessage
+	In   chan *StreamMessage
+	Outs map[string]chan *StreamMessage
 }
 
-// func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) (*StreamBroadcastOutput, error) {
-// 	if atomic.LoadInt32(&op.active) != 1 {
-// 		return nil, nil // not running
-// 	}
+func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) (*StreamBroadcastOutput, error) {
+	if atomic.LoadInt32(&op.active) != 1 {
+		return nil, nil // not running
+	}
 
-// 	var stream bool
-// 	outs := []BroadcastOutput{}
-// 	var w sync.WaitGroup
-// 	var outch chan BroadcastOutput
-// 	members := op.getMembers()
-// 	if len(args) > 0 && args[0].SkipSelf {
-// 		delete(members, op.Name())
-// 	}
+	members := op.getMembers()
+	if len(args) > 0 && args[0].SkipSelf {
+		delete(members, op.Name())
+	}
 
-// 	for k := range members {
-// 		w.Add(1)
-// 		go func(id string) {
-// 			defer w.Done()
-// 			timeout := time.Second * 5
-// 			conn, err := net.DialTimeout("tcp", id, timeout)
-// 			if err != nil {
-// 				outch <- BroadcastOutput{Id: id, Error: err}
-// 				return
-// 			}
+	ret := StreamBroadcastOutput{
+		In:   make(chan *StreamMessage),
+		Outs: make(map[string]chan *StreamMessage),
+	}
 
-// 			defer conn.Close()
-// 			enc := base64.StdEncoding.EncodeToString(msg)
-// 			var sb strings.Builder
-// 			fmt.Fprintf(&sb, "%s %s\n", CmdBroadcast, enc)
-// 			reply, err := op.send(conn, sb.String())
-// 			if err != nil {
-// 				outch <- BroadcastOutput{Id: id, Error: err}
-// 				return
-// 			}
+	_, gp, _ := net.SplitHostPort(op.grpcHostPort)
+	conns := make(map[string]*grpc.ClientConn)
+	streams := make(map[string]protov1.Hedge_BroadcastClient)
+	for k := range members {
+		h, _, _ := net.SplitHostPort(k)
+		gHostPort := net.JoinHostPort(h, gp)
 
-// 			switch {
-// 			case strings.HasPrefix(reply, CmdAck): // expect "ACK base64(reply)"
-// 				ss := strings.Split(reply, " ")
-// 				if len(ss) > 1 {
-// 					r, e := base64.StdEncoding.DecodeString(ss[1])
-// 					outch <- BroadcastOutput{Id: id, Reply: r, Error: e}
-// 					return
-// 				}
-// 			}
+		var opts []grpc.DialOption
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		lconn, err := grpc.NewClient(gHostPort, opts...)
+		if err != nil {
+			return nil, err
+		}
 
-// 			// If not ACK, then the whole reply is an error string.
-// 			r, _ := base64.StdEncoding.DecodeString(reply)
-// 			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf(string(r))}
-// 		}(k)
-// 	}
+		conns[k] = lconn
+		client := protov1.NewHedgeClient(lconn)
+		stream, err := client.Broadcast(ctx)
+		if err != nil {
+			continue
+		}
 
-// 	w.Wait()
-// 	switch {
-// 	case stream:
-// 		close(args[0].Out)
-// 	default:
-// 		for range members {
-// 			outs = append(outs, <-outch)
-// 		}
-// 	}
+		streams[k] = stream
+		ret.Outs[k] = make(chan *StreamMessage)
+	}
 
-// 	return outs
-// }
+	keyId := "id"
+	id := uuid.NewString()
+	reply := make(chan error)
+
+	go func() {
+		for m := range ret.In {
+			if m.Payload.Meta == nil {
+				m.Payload.Meta = map[string]string{keyId: id}
+			} else {
+				if _, ok := m.Payload.Meta[keyId]; !ok {
+					m.Payload.Meta[keyId] = id
+				}
+			}
+
+			for _, v := range streams {
+				v.Send(m.Payload)
+			}
+		}
+
+		for _, v := range streams {
+			v.CloseSend()
+		}
+
+		reply <- nil
+	}()
+
+	go func() {
+		defer func() {
+			for _, v := range ret.Outs {
+				close(v)
+			}
+
+			for _, v := range conns {
+				v.Close()
+			}
+		}()
+
+		<-reply // input done
+
+		var w sync.WaitGroup
+		for k, v := range streams {
+			w.Add(1)
+			go func(node string, stream protov1.Hedge_BroadcastClient) {
+				defer w.Done()
+				for {
+					resp, err := stream.Recv()
+					if err == io.EOF {
+						return
+					}
+
+					ret.Outs[node] <- &StreamMessage{Payload: resp}
+				}
+			}(k, v)
+		}
+
+		w.Wait()
+	}()
+
+	return &ret, nil
+}
 
 // Members returns a list of members in the cluster/group.
 func (op *Op) Members() []string {
