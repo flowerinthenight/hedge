@@ -158,8 +158,8 @@ func (w withGrpcHostPort) Apply(op *Op) { op.grpcHostPort = string(w) }
 func WithGrpcHostPort(v string) Option { return withGrpcHostPort(v) }
 
 type StreamMessage struct {
-	Payload *protov1.Payload
-	Error   error
+	Payload *protov1.Payload `json:"payload"`
+	Error   error            `json:"error"`
 }
 
 type withLeaderStreamChannels struct {
@@ -737,8 +737,8 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 }
 
 type StreamToLeaderOutput struct {
-	In  chan *StreamMessage
-	Out chan *StreamMessage
+	In  chan *StreamMessage `json:"in"`
+	Out chan *StreamMessage `json:"out"`
 }
 
 // StreamToLeader returns an input and output channels for streaming to leader. To use the channels,
