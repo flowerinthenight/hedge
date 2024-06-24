@@ -2,9 +2,9 @@ package hedge
 
 import (
 	"io"
-	"sync"
 
 	protov1 "github.com/flowerinthenight/hedge/proto/v1"
+	"golang.org/x/sync/errgroup"
 )
 
 type service struct {
@@ -15,90 +15,92 @@ type service struct {
 
 func (s *service) Send(hs protov1.Hedge_SendServer) error {
 	ctx := hs.Context()
-	var w sync.WaitGroup
-	w.Add(1)
-	go func() {
-		defer w.Done()
+	g := new(errgroup.Group)
+	g.Go(func() error {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 			}
 
 			in, err := hs.Recv()
 			if err == io.EOF {
-				return
+				return nil
 			}
 
-			s.op.leaderStreamIn <- &StreamMessage{Payload: in}
-		}
-	}()
+			if err != nil {
+				return err
+			}
 
-	w.Add(1)
-	go func() {
-		defer w.Done()
+			s.op.leaderStreamIn <- &StreamMessage{
+				Payload: in,
+			}
+		}
+	})
+
+	g.Go(func() error {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 			}
 
 			out := <-s.op.leaderStreamOut
 			if out == nil {
-				return
+				return nil
 			}
 
 			hs.Send(out.Payload)
 		}
-	}()
+	})
 
-	w.Wait()
-	return nil
+	return g.Wait()
 }
 
 func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
 	ctx := hs.Context()
-	var w sync.WaitGroup
-	w.Add(1)
-	go func() {
-		defer w.Done()
+	g := new(errgroup.Group)
+	g.Go(func() error {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 			}
 
 			in, err := hs.Recv()
 			if err == io.EOF {
-				return
+				return nil
 			}
 
-			s.op.broadcastStreamIn <- &StreamMessage{Payload: in}
-		}
-	}()
+			if err != nil {
+				return err
+			}
 
-	w.Add(1)
-	go func() {
-		defer w.Done()
+			s.op.broadcastStreamIn <- &StreamMessage{
+				Payload: in,
+			}
+		}
+	})
+
+	g.Go(func() error {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 			}
 
 			out := <-s.op.broadcastStreamOut
 			if out == nil {
-				return
+				return nil
 			}
 
 			hs.Send(out.Payload)
 		}
-	}()
+	})
 
-	w.Wait()
-	return nil
+	return g.Wait()
 }

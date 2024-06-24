@@ -772,6 +772,8 @@ func (op *Op) StreamToLeader(ctx context.Context) (*StreamToLeaderOutput, error)
 		Out: make(chan *StreamMessage),
 	}
 
+	// Exit only when input channel is closed by the caller.
+	// We don't wait for this goroutine.
 	go func() {
 		var err error
 		for m := range ret.In {
@@ -793,6 +795,8 @@ func (op *Op) StreamToLeader(ctx context.Context) (*StreamToLeaderOutput, error)
 		reply <- err
 	}()
 
+	// Exit only when streaming response is done.
+	// We don't wait for this goroutine.
 	go func() {
 		defer func() {
 			close(ret.Out)
@@ -977,6 +981,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 	reply := make(chan error)
 
 	// Exit only when input channel is closed by the caller.
+	// We don't wait for this goroutine.
 	go func() {
 		for m := range ret.In {
 			if m.Payload.Meta == nil {
@@ -1000,6 +1005,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 	}()
 
 	// Exit only when all streaming responses from all nodes are done.
+	// We don't wait for this goroutine.
 	go func() {
 		defer func() {
 			for _, v := range ret.Outs {
@@ -1194,6 +1200,7 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 			return nil, ErrNoLeader
 		}
 
+		// Get the gRPC host:port.
 		h, _, _ := net.SplitHostPort(leader)
 		_, gp, _ := net.SplitHostPort(op.grpcHostPort)
 		gleader := net.JoinHostPort(h, gp)
@@ -1320,6 +1327,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		list.Shutdown()
 	}
 
+	// Our gRPC host:port by default is set to host:port+1.
 	if op.grpcHostPort == "" {
 		host, port, _ := net.SplitHostPort(op.hostPort)
 		pi, _ := strconv.Atoi(port)
