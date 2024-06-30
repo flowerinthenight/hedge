@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion7
 type HedgeClient interface {
 	Send(ctx context.Context, opts ...grpc.CallOption) (Hedge_SendClient, error)
 	Broadcast(ctx context.Context, opts ...grpc.CallOption) (Hedge_BroadcastClient, error)
+	Distribute(ctx context.Context, opts ...grpc.CallOption) (Hedge_DistributeClient, error)
 }
 
 type hedgeClient struct {
@@ -92,12 +93,44 @@ func (x *hedgeBroadcastClient) Recv() (*Payload, error) {
 	return m, nil
 }
 
+func (c *hedgeClient) Distribute(ctx context.Context, opts ...grpc.CallOption) (Hedge_DistributeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[2], "/hedge.proto.v1.Hedge/Distribute", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &hedgeDistributeClient{stream}
+	return x, nil
+}
+
+type Hedge_DistributeClient interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ClientStream
+}
+
+type hedgeDistributeClient struct {
+	grpc.ClientStream
+}
+
+func (x *hedgeDistributeClient) Send(m *Payload) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *hedgeDistributeClient) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // HedgeServer is the server API for Hedge service.
 // All implementations must embed UnimplementedHedgeServer
 // for forward compatibility
 type HedgeServer interface {
 	Send(Hedge_SendServer) error
 	Broadcast(Hedge_BroadcastServer) error
+	Distribute(Hedge_DistributeServer) error
 	mustEmbedUnimplementedHedgeServer()
 }
 
@@ -110,6 +143,9 @@ func (UnimplementedHedgeServer) Send(Hedge_SendServer) error {
 }
 func (UnimplementedHedgeServer) Broadcast(Hedge_BroadcastServer) error {
 	return status.Errorf(codes.Unimplemented, "method Broadcast not implemented")
+}
+func (UnimplementedHedgeServer) Distribute(Hedge_DistributeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Distribute not implemented")
 }
 func (UnimplementedHedgeServer) mustEmbedUnimplementedHedgeServer() {}
 
@@ -176,6 +212,32 @@ func (x *hedgeBroadcastServer) Recv() (*Payload, error) {
 	return m, nil
 }
 
+func _Hedge_Distribute_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HedgeServer).Distribute(&hedgeDistributeServer{stream})
+}
+
+type Hedge_DistributeServer interface {
+	Send(*Payload) error
+	Recv() (*Payload, error)
+	grpc.ServerStream
+}
+
+type hedgeDistributeServer struct {
+	grpc.ServerStream
+}
+
+func (x *hedgeDistributeServer) Send(m *Payload) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *hedgeDistributeServer) Recv() (*Payload, error) {
+	m := new(Payload)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // Hedge_ServiceDesc is the grpc.ServiceDesc for Hedge service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -193,6 +255,12 @@ var Hedge_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Broadcast",
 			Handler:       _Hedge_Broadcast_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Distribute",
+			Handler:       _Hedge_Distribute_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

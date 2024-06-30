@@ -19,6 +19,7 @@ import (
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
 	protov1 "github.com/flowerinthenight/hedge/proto/v1"
+	"github.com/google/uuid"
 )
 
 var (
@@ -287,6 +288,58 @@ func main() {
 		}
 
 		wg.Wait()
+		w.Write([]byte("OK"))
+	})
+
+	mux.HandleFunc("/distmem", func(w http.ResponseWriter, r *http.Request) {
+		defer func(start time.Time) {
+			slog.Info("distmem:", "duration", time.Since(start))
+		}(time.Now())
+
+		dm := op.NewDistMem("sampledistmem", 50_000_000) // 50MB
+		writer, err := dm.Writer()
+		if err != nil {
+			slog.Error("Writer failed:", "err", err)
+			return
+		}
+
+		defer writer.Close()
+		var n int
+		var t time.Duration
+		for i := 0; i < 1_000_000; i++ {
+			data := fmt.Sprintf("%v_%v_%v", i, uuid.NewString(), uuid.NewString())
+			n += len([]byte(data))
+			s := time.Now()
+			writer.Write([]byte(data))
+			t = t + time.Since(s)
+		}
+
+		slog.Info("write_lastIndex:", "val", writer.LastIndex(), "n", n, "t", t)
+
+		t = 0
+		s := time.Now()
+
+		n = 0
+		reader, _ := dm.Reader()
+		var oldLastIndex int64
+		for {
+			if !reader.Next() {
+				slog.Info("next done")
+				break
+			}
+
+			li := reader.LastIndex()
+			if (li - oldLastIndex) != 1 {
+				slog.Info("wrong index:", "index", li, "old", oldLastIndex)
+			}
+
+			data := reader.Read()
+			n += len(data)
+			oldLastIndex = li
+		}
+
+		t = t + time.Since(s)
+		slog.Info("read_lastIndex:", "val", reader.LastIndex(), "n", n, "t", t)
 		w.Write([]byte("OK"))
 	})
 

@@ -5,6 +5,8 @@ import (
 
 	protov1 "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type service struct {
@@ -103,4 +105,8 @@ func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
 	})
 
 	return g.Wait()
+}
+
+func (s *service) Distribute(hs protov1.Hedge_DistributeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Distribute not implemented")
 }

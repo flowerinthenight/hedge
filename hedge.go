@@ -548,6 +548,10 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 	return &Semaphore{name, limit, op}, nil
 }
 
+func (op *Op) NewDistMem(name string, limit uint64) *DistMem {
+	return NewDistMem(name, op, &DistMemOptions{Limit: limit})
+}
+
 // Get reads a key (or keys) from Op.
 // The values of limit are:
 //

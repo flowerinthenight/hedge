@@ -7,6 +7,7 @@ option go_package = "github.com/flowerinthenight/hedge/proto/v1";
 service Hedge {
   rpc Send(stream Payload) returns (stream Payload) {}
   rpc Broadcast(stream Payload) returns (stream Payload) {}
+  rpc Distribute(stream Payload) returns (stream Payload) {}
 }
 
 message Payload {
