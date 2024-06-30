@@ -7,6 +7,10 @@ import (
 	"syscall"
 )
 
+type sizeT struct {
+	size uint64
+}
+
 type DistMemOptions struct {
 	Limit uint64 // size limit (bytes) before spill-over
 }
@@ -17,14 +21,15 @@ type DistMem struct {
 	Name string
 
 	op     *Op
-	data   map[string]map[int64][]byte // key=op.Name
-	size   uint64
+	nodes  []uint64 // 0=local, ...=spillover
+	sizes  map[uint64]*sizeT
 	limit  uint64
 	writer *writerT
+	hasher hashT
+	data   map[uint64]map[int64][]byte // key=op.Name
 }
 
 type writerT struct {
-	so bool
 	li int64
 	dm *DistMem
 	ch chan []byte
@@ -41,32 +46,32 @@ func (w *writerT) LastIndex() int64 { return atomic.LoadInt64(&w.li) }
 
 func (w *writerT) start() {
 	go func() {
-		printed := false
+		var spillCount int
+		node := w.dm.nodes[0]
 		for d := range w.ch {
-			size := atomic.LoadUint64(&w.dm.size)
+			size := atomic.LoadUint64(&w.dm.sizes[node].size)
 			limit := atomic.LoadUint64(&w.dm.limit)
 			if size >= limit {
-				w.so = true
+				node = w.dm.nextNode()
+				w.dm.op.logger.Println("spillover to:", node)
 			}
 
 			switch {
-			case w.so:
-				if !printed {
-					w.dm.op.logger.Println(w.dm.Name, "spillover")
-					printed = true
-				}
-			default: // local mem
-				name := w.dm.Name
-				if _, ok := w.dm.data[name]; !ok {
-					w.dm.data[name] = make(map[int64][]byte)
+			case node != w.dm.me():
+				spillCount++
+			default:
+				if _, ok := w.dm.data[node]; !ok {
+					w.dm.data[node] = make(map[int64][]byte)
 				}
 
 				ni := atomic.LoadInt64(&w.li) + 1
-				w.dm.data[name][ni] = d
-				atomic.AddUint64(&w.dm.size, uint64(len(d)))
+				w.dm.data[node][ni] = d
+				atomic.AddUint64(&w.dm.sizes[node].size, uint64(len(d)))
 				atomic.StoreInt64(&w.li, ni)
 			}
 		}
+
+		w.dm.op.logger.Println("spillCount:", spillCount)
 	}()
 }
 
@@ -106,11 +111,11 @@ func (r *readerT) Next() bool {
 }
 
 func (r *readerT) Read() []byte {
-	name := r.dm.Name
+	node := r.dm.nodes[0]
 	i := atomic.LoadInt64(&r.li)
-	if _, ok1 := r.dm.data[name]; ok1 {
-		if _, ok2 := r.dm.data[name][i]; ok2 {
-			return r.dm.data[name][i]
+	if _, ok1 := r.dm.data[node]; ok1 {
+		if _, ok2 := r.dm.data[node][i]; ok2 {
+			return r.dm.data[node][i]
 		}
 	}
 
@@ -129,12 +134,40 @@ func (dm *DistMem) Reader() (*readerT, error) {
 	return r, nil
 }
 
+func (dm *DistMem) nextNode() uint64 {
+	members := dm.op.Members()
+	for _, member := range members {
+		nn := dm.hasher.Sum64([]byte(member))
+		if nn == dm.me() {
+			continue
+		}
+
+		if _, ok := dm.data[nn]; ok {
+			continue
+		}
+
+		dm.op.logger.Println("nextNode:", member)
+		dm.nodes = append(dm.nodes, nn)
+		dm.sizes[nn] = &sizeT{}
+		dm.data[nn] = make(map[int64][]byte)
+		break
+	}
+
+	return dm.nodes[len(dm.nodes)-1]
+}
+
+func (dm *DistMem) me() uint64 { return dm.hasher.Sum64([]byte(dm.op.Name())) }
+
 func NewDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	dm := &DistMem{
-		Name: fmt.Sprintf("%v/%v", op.Name(), name),
-		op:   op,
-		data: map[string]map[int64][]byte{},
+		Name:  fmt.Sprintf("%v/%v", op.Name(), name),
+		op:    op,
+		sizes: make(map[uint64]*sizeT),
+		data:  map[uint64]map[int64][]byte{},
 	}
+
+	dm.nodes = []uint64{dm.me()} // 0 = local
+	dm.sizes[dm.me()] = &sizeT{} // init local
 
 	if len(opts) > 0 {
 		dm.limit = opts[0].Limit
@@ -146,6 +179,6 @@ func NewDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		dm.limit = si.Freeram / 2 // half of free mem
 	}
 
-	dm.op.logger.Println("limit:", dm.limit)
+	dm.op.logger.Println("me:", dm.me(), "limit:", dm.limit)
 	return dm
 }

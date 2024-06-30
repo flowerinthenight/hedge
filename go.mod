@@ -4,6 +4,7 @@ go 1.21
 
 require (
 	cloud.google.com/go/spanner v1.63.0
+	github.com/cespare/xxhash v1.1.0
 	github.com/flowerinthenight/spindle v1.2.4
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.12.5
