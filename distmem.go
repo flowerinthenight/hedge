@@ -5,10 +5,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+
+	"google.golang.org/grpc"
 )
 
-type sizeT struct {
+type metaT struct {
 	size uint64
+	conn *grpc.ClientConn
 }
 
 type DistMemOptions struct {
@@ -21,8 +24,8 @@ type DistMem struct {
 	Name string
 
 	op     *Op
-	nodes  []uint64 // 0=local, ...=spillover
-	sizes  map[uint64]*sizeT
+	nodes  []uint64          // 0=local, ...=spillover
+	meta   map[uint64]*metaT // per-node metadata
 	limit  uint64
 	writer *writerT
 	hasher hashT
@@ -49,7 +52,7 @@ func (w *writerT) start() {
 		var spillCount int
 		node := w.dm.nodes[0]
 		for d := range w.ch {
-			size := atomic.LoadUint64(&w.dm.sizes[node].size)
+			size := atomic.LoadUint64(&w.dm.meta[node].size)
 			limit := atomic.LoadUint64(&w.dm.limit)
 			if size >= limit {
 				node = w.dm.nextNode()
@@ -66,7 +69,7 @@ func (w *writerT) start() {
 
 				ni := atomic.LoadInt64(&w.li) + 1
 				w.dm.data[node][ni] = d
-				atomic.AddUint64(&w.dm.sizes[node].size, uint64(len(d)))
+				atomic.AddUint64(&w.dm.meta[node].size, uint64(len(d)))
 				atomic.StoreInt64(&w.li, ni)
 			}
 		}
@@ -148,7 +151,7 @@ func (dm *DistMem) nextNode() uint64 {
 
 		dm.op.logger.Println("nextNode:", member)
 		dm.nodes = append(dm.nodes, nn)
-		dm.sizes[nn] = &sizeT{}
+		dm.meta[nn] = &metaT{}
 		dm.data[nn] = make(map[int64][]byte)
 		break
 	}
@@ -158,16 +161,16 @@ func (dm *DistMem) nextNode() uint64 {
 
 func (dm *DistMem) me() uint64 { return dm.hasher.Sum64([]byte(dm.op.Name())) }
 
-func NewDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
+func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	dm := &DistMem{
-		Name:  fmt.Sprintf("%v/%v", op.Name(), name),
-		op:    op,
-		sizes: make(map[uint64]*sizeT),
-		data:  map[uint64]map[int64][]byte{},
+		Name: fmt.Sprintf("%v/%v", op.Name(), name),
+		op:   op,
+		meta: make(map[uint64]*metaT),
+		data: map[uint64]map[int64][]byte{},
 	}
 
 	dm.nodes = []uint64{dm.me()} // 0 = local
-	dm.sizes[dm.me()] = &sizeT{} // init local
+	dm.meta[dm.me()] = &metaT{}  // init local
 
 	if len(opts) > 0 {
 		dm.limit = opts[0].Limit

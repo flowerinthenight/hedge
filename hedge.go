@@ -219,6 +219,8 @@ type Op struct {
 	broadcastStreamIn  chan *StreamMessage
 	broadcastStreamOut chan *StreamMessage
 
+	dms map[string]*DistMem // distributed memory
+
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
 	syncInterval  time.Duration       // ensure membership
@@ -549,7 +551,17 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 }
 
 func (op *Op) NewDistMem(name string, limit uint64) *DistMem {
-	return NewDistMem(name, op, &DistMemOptions{Limit: limit})
+	if _, ok := op.dms[name]; ok {
+		return op.dms[name]
+	}
+
+	op.dms[name] = newDistMem(
+		name,
+		op,
+		&DistMemOptions{Limit: limit},
+	)
+
+	return op.dms[name]
 }
 
 // Get reads a key (or keys) from Op.
@@ -1306,6 +1318,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		members:       make(map[string]struct{}),
 		ensureCh:      make(chan string),
 		ensureDone:    make(chan struct{}, 1),
+		dms:           map[string]*DistMem{},
 		Lock:          &spindle.Lock{}, // init later
 	}
 
