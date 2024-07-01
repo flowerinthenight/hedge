@@ -105,7 +105,46 @@ func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
 	return g.Wait()
 }
 
-func (s *service) Distribute(hs protov1.Hedge_DistributeServer) error {
+func (s *service) DMemWrite(hs protov1.Hedge_DMemWriteServer) error {
+	ctx := hs.Context()
+	g := new(errgroup.Group)
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+
+			in, err := hs.Recv()
+			if err == io.EOF {
+				return nil
+			}
+
+			if err != nil {
+				return err
+			}
+
+			_ = in
+		}
+	})
+
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+
+			hs.Send(&protov1.Payload{})
+		}
+	})
+
+	return g.Wait()
+}
+
+func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
 	ctx := hs.Context()
 	g := new(errgroup.Group)
 	g.Go(func() error {
