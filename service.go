@@ -2,6 +2,7 @@ package hedge
 
 import (
 	"io"
+	"strconv"
 
 	protov1 "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/sync/errgroup"
@@ -106,42 +107,46 @@ func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
 }
 
 func (s *service) DMemWrite(hs protov1.Hedge_DMemWriteServer) error {
+	var err error
 	ctx := hs.Context()
-	g := new(errgroup.Group)
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
+	var writer *writerT
 
-			in, err := hs.Recv()
-			if err == io.EOF {
-				return nil
-			}
-
-			if err != nil {
-				return err
-			}
-
-			_ = in
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			break loop
+		default:
 		}
-	})
 
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
-
-			hs.Send(&protov1.Payload{})
+		in, err := hs.Recv()
+		if err == io.EOF {
+			break
 		}
-	})
 
-	return g.Wait()
+		if err != nil {
+			s.op.logger.Println("service: Recv failed:", err)
+			break
+		}
+
+		name := in.Meta[metaName]
+		limit, _ := strconv.ParseUint(in.Meta[metaLimit], 10, 64)
+		s.op.dms[name] = s.op.NewDistMem(name, limit) // ensure
+		if writer == nil {
+			writer, _ = s.op.dms[name].Writer(&writerOptionsT{
+				LocalOnly: true,
+			})
+		}
+
+		writer.Write(in.Data)
+	}
+
+	if writer != nil {
+		writer.Close()
+	}
+
+	return err
 }
 
 func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {

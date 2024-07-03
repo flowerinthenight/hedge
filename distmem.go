@@ -1,17 +1,29 @@
 package hedge
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
 
+	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+const (
+	metaName  = "name"
+	metaLimit = "limit"
 )
 
 type metaT struct {
-	size uint64
-	conn *grpc.ClientConn
+	size   uint64
+	conn   *grpc.ClientConn
+	client pb.HedgeClient
+	stream pb.Hedge_DMemWriteClient
 }
 
 type DistMemOptions struct {
@@ -29,56 +41,130 @@ type DistMem struct {
 	limit  uint64
 	writer *writerT
 	hasher hashT
-	data   map[uint64]map[int64][]byte // key=op.Name
+	data   map[uint64][][]byte
 }
 
 type writerT struct {
-	li int64
-	dm *DistMem
-	ch chan []byte
+	lo  bool // local write only
+	dm  *DistMem
+	ch  chan []byte
+	off int32
 }
 
-func (w *writerT) Write(data []byte) int64 {
-	w.ch <- data
-	return w.LastIndex()
+func (w *writerT) Write(data []byte) { w.ch <- data }
+
+func (w *writerT) Close() {
+	if atomic.LoadInt32(&w.off) > 0 {
+		return
+	}
+
+	close(w.ch)
+	atomic.AddInt32(&w.off, 1)
 }
-
-func (w *writerT) Close() { close(w.ch) }
-
-func (w *writerT) LastIndex() int64 { return atomic.LoadInt64(&w.li) }
 
 func (w *writerT) start() {
 	go func() {
+		ctx := context.Background()
+		var all int
+		var normCount int
 		var spillCount int
+		var noSpaceCount int
 		node := w.dm.nodes[0]
-		for d := range w.ch {
+		for data := range w.ch {
+			all++
+			var err error
+			var nextName string
 			size := atomic.LoadUint64(&w.dm.meta[node].size)
 			limit := atomic.LoadUint64(&w.dm.limit)
-			if size >= limit {
-				node = w.dm.nextNode()
-				w.dm.op.logger.Println("spillover to:", node)
+			if !w.lo && size >= limit {
+				nextName, node = w.dm.nextNode()
+				if nextName == "" {
+					noSpaceCount++
+					continue
+				}
+
+				if w.dm.meta[node].conn == nil {
+					host, port, _ := net.SplitHostPort(nextName)
+					pi, _ := strconv.Atoi(port)
+					nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
+
+					var opts []grpc.DialOption
+					opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+					w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
+					if err != nil {
+						w.dm.op.logger.Println("NewClient failed:", nextName, err)
+					}
+
+					w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
+					w.dm.meta[node].stream, err = w.dm.meta[node].client.DMemWrite(ctx)
+					if err != nil {
+						w.dm.op.logger.Println("DMemWrite failed:", nextName, err)
+					}
+				}
 			}
 
 			switch {
-			case node != w.dm.me():
+			case !w.lo && node != w.dm.me():
 				spillCount++
-			default:
-				if _, ok := w.dm.data[node]; !ok {
-					w.dm.data[node] = make(map[int64][]byte)
+				err := w.dm.meta[node].stream.Send(&pb.Payload{
+					Meta: map[string]string{
+						metaName:  w.dm.Name,
+						metaLimit: fmt.Sprintf("%v", w.dm.limit),
+					},
+					Data: data,
+				})
+
+				if err != nil {
+					w.dm.op.logger.Println("spillover: Send failed:", err)
 				}
 
-				ni := atomic.LoadInt64(&w.li) + 1
-				w.dm.data[node][ni] = d
-				atomic.AddUint64(&w.dm.meta[node].size, uint64(len(d)))
-				atomic.StoreInt64(&w.li, ni)
+				atomic.AddUint64(&w.dm.meta[node].size, uint64(len(data)))
+			default:
+				if size < limit {
+					normCount++
+					if _, ok := w.dm.data[node]; !ok {
+						w.dm.data[node] = [][]byte{}
+					}
+
+					w.dm.data[node] = append(w.dm.data[node], data)
+					atomic.AddUint64(&w.dm.meta[node].size, uint64(len(data)))
+				}
 			}
 		}
 
-		w.dm.op.logger.Println("spillCount:", spillCount)
+		for k, v := range w.dm.data {
+			var size int
+			for _, j := range v {
+				size += len(j)
+			}
+
+			w.dm.op.logger.Println(k, "sliceLen", len(v), "accumLen:", size)
+		}
+
+		w.dm.op.logger.Println(
+			"all:", all,
+			"add:", normCount+spillCount+noSpaceCount,
+			"norm:", normCount,
+			"spill:", spillCount,
+			"noSpace:", noSpaceCount,
+			"nodes:", w.dm.nodes,
+			"meta:", w.dm.meta,
+		)
+
+		for _, v := range w.dm.meta {
+			if v.conn != nil {
+				v.stream.CloseSend()
+				v.conn.Close()
+			}
+		}
 	}()
 }
 
-func (dm *DistMem) Writer() (*writerT, error) {
+type writerOptionsT struct {
+	LocalOnly bool
+}
+
+func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 	ref := func() bool {
 		dm.Lock()
 		ok := dm.writer != nil
@@ -90,9 +176,14 @@ func (dm *DistMem) Writer() (*writerT, error) {
 		return nil, fmt.Errorf("can only have one writer")
 	}
 
+	var localOnly bool
+	if len(opts) > 0 {
+		localOnly = opts[0].LocalOnly
+	}
+
 	dm.Lock()
 	dm.writer = &writerT{
-		li: -1,
+		lo: localOnly,
 		dm: dm,
 		ch: make(chan []byte),
 	}
@@ -108,36 +199,37 @@ type readerT struct {
 	w  *writerT
 }
 
-func (r *readerT) Next() bool {
-	ni := atomic.AddInt64(&r.li, 1)
-	return ni <= atomic.LoadInt64(&r.w.li)
-}
+// func (r *readerT) Next() bool {
+// 	ni := atomic.AddInt64(&r.li, 1)
+// 	return ni <= atomic.LoadInt64(&r.w.li)
+// }
 
-func (r *readerT) Read() []byte {
-	node := r.dm.nodes[0]
-	i := atomic.LoadInt64(&r.li)
-	if _, ok1 := r.dm.data[node]; ok1 {
-		if _, ok2 := r.dm.data[node][i]; ok2 {
-			return r.dm.data[node][i]
-		}
-	}
+// func (r *readerT) Read() []byte {
+// 	node := r.dm.nodes[0]
+// 	i := atomic.LoadInt64(&r.li)
+// 	if _, ok1 := r.dm.data[node]; ok1 {
+// 		if _, ok2 := r.dm.data[node][i]; ok2 {
+// 			return r.dm.data[node][i]
+// 		}
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-func (r *readerT) LastIndex() int64 { return atomic.LoadInt64(&r.li) }
+// func (r *readerT) LastIndex() int64 { return atomic.LoadInt64(&r.li) }
 
-func (dm *DistMem) Reader() (*readerT, error) {
-	r := &readerT{
-		li: -1,
-		dm: dm,
-		w:  dm.writer,
-	}
+// func (dm *DistMem) Reader() (*readerT, error) {
+// 	r := &readerT{
+// 		li: -1,
+// 		dm: dm,
+// 		w:  dm.writer,
+// 	}
 
-	return r, nil
-}
+// 	return r, nil
+// }
 
-func (dm *DistMem) nextNode() uint64 {
+func (dm *DistMem) nextNode() (string, uint64) {
+	var mb string
 	members := dm.op.Members()
 	for _, member := range members {
 		nn := dm.hasher.Sum64([]byte(member))
@@ -149,14 +241,14 @@ func (dm *DistMem) nextNode() uint64 {
 			continue
 		}
 
-		dm.op.logger.Println("nextNode:", member)
+		mb = member
 		dm.nodes = append(dm.nodes, nn)
 		dm.meta[nn] = &metaT{}
-		dm.data[nn] = make(map[int64][]byte)
+		dm.data[nn] = [][]byte{}
 		break
 	}
 
-	return dm.nodes[len(dm.nodes)-1]
+	return mb, dm.nodes[len(dm.nodes)-1]
 }
 
 func (dm *DistMem) me() uint64 { return dm.hasher.Sum64([]byte(dm.op.Name())) }
@@ -166,7 +258,7 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		Name: fmt.Sprintf("%v/%v", op.Name(), name),
 		op:   op,
 		meta: make(map[uint64]*metaT),
-		data: map[uint64]map[int64][]byte{},
+		data: map[uint64][][]byte{},
 	}
 
 	dm.nodes = []uint64{dm.me()} // 0 = local
@@ -182,6 +274,5 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		dm.limit = si.Freeram / 2 // half of free mem
 	}
 
-	dm.op.logger.Println("me:", dm.me(), "limit:", dm.limit)
 	return dm
 }

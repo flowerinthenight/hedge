@@ -296,7 +296,7 @@ func main() {
 			slog.Info("distmem:", "duration", time.Since(start))
 		}(time.Now())
 
-		dm := op.NewDistMem("sampledistmem", 50_000_000) // 50MB
+		dm := op.NewDistMem("sampledistmem", 1_000)
 		writer, err := dm.Writer()
 		if err != nil {
 			slog.Error("Writer failed:", "err", err)
@@ -306,7 +306,7 @@ func main() {
 		defer writer.Close()
 		var n int
 		var t time.Duration
-		for i := 0; i < 1_000_000; i++ {
+		for i := 0; i < 45; i++ {
 			data := fmt.Sprintf("%v_%v_%v", i, uuid.NewString(), uuid.NewString())
 			n += len([]byte(data))
 			s := time.Now()
@@ -314,32 +314,32 @@ func main() {
 			t = t + time.Since(s)
 		}
 
-		slog.Info("write_lastIndex:", "val", writer.LastIndex(), "n", n, "t", t)
+		slog.Info("write:", "accumSize", n, "took", t)
 
-		t = 0
-		s := time.Now()
+		// t = 0
+		// s := time.Now()
 
 		n = 0
-		reader, _ := dm.Reader()
-		var oldLastIndex int64
-		for {
-			if !reader.Next() {
-				slog.Info("next done")
-				break
-			}
+		// reader, _ := dm.Reader()
+		// var oldLastIndex int64
+		// for {
+		// 	if !reader.Next() {
+		// 		slog.Info("next done")
+		// 		break
+		// 	}
 
-			li := reader.LastIndex()
-			if (li - oldLastIndex) != 1 {
-				slog.Info("wrong index:", "index", li, "old", oldLastIndex)
-			}
+		// 	li := reader.LastIndex()
+		// 	if (li - oldLastIndex) != 1 {
+		// 		slog.Info("wrong index:", "index", li, "old", oldLastIndex)
+		// 	}
 
-			data := reader.Read()
-			n += len(data)
-			oldLastIndex = li
-		}
+		// 	data := reader.Read()
+		// 	n += len(data)
+		// 	oldLastIndex = li
+		// }
 
-		t = t + time.Since(s)
-		slog.Info("read_lastIndex:", "val", reader.LastIndex(), "n", n, "t", t)
+		// t = t + time.Since(s)
+		// slog.Info("read_lastIndex:", "val", reader.LastIndex(), "n", n, "t", t)
 		w.Write([]byte("OK"))
 	})
 
