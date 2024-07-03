@@ -296,30 +296,53 @@ func main() {
 			slog.Info("distmem:", "duration", time.Since(start))
 		}(time.Now())
 
-		dm := op.NewDistMem("sampledistmem", 1_000)
-		writer, err := dm.Writer()
-		if err != nil {
-			slog.Error("Writer failed:", "err", err)
-			return
-		}
+		name := "distmem_" + time.Now().Format(time.RFC3339)
+		slog.Info("start distmem:", "name", name)
+		limit := 45
 
-		defer writer.Close()
-		var n int
-		var t time.Duration
-		for i := 0; i < 45; i++ {
-			data := fmt.Sprintf("%v_%v_%v", i, uuid.NewString(), uuid.NewString())
-			n += len([]byte(data))
-			s := time.Now()
-			writer.Write([]byte(data))
-			t = t + time.Since(s)
-		}
+		func() {
+			dm := op.NewDistMem(name, 1_000)
+			writer, err := dm.Writer()
+			if err != nil {
+				slog.Error("Writer failed:", "err", err)
+				return
+			}
 
-		slog.Info("write:", "accumSize", n, "took", t)
+			defer writer.Close()
+			var n int
+			var t time.Duration
+			for i := 0; i < limit; i++ {
+				data := fmt.Sprintf("1_%v_%v", uuid.NewString(), uuid.NewString())
+				n += len([]byte(data))
+				s := time.Now()
+				writer.Write([]byte(data))
+				t = t + time.Since(s)
+			}
+
+			slog.Info("write_dm:", "accumSize", n, "took", t)
+		}()
+
+		func() {
+			f, err := os.Create(name)
+			if err != nil {
+				return
+			}
+
+			defer f.Close()
+			var t time.Duration
+			for i := 0; i < limit; i++ {
+				data := fmt.Sprintf("%v_%v_%v", i, uuid.NewString(), uuid.NewString())
+				s := time.Now()
+				f.Write([]byte(data))
+				t = t + time.Since(s)
+			}
+
+			slog.Info("write_file:", "took", t)
+		}()
 
 		// t = 0
 		// s := time.Now()
 
-		n = 0
 		// reader, _ := dm.Reader()
 		// var oldLastIndex int64
 		// for {

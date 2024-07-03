@@ -21,6 +21,7 @@ const (
 
 type metaT struct {
 	size   uint64
+	grpc   int32
 	conn   *grpc.ClientConn
 	client pb.HedgeClient
 	stream pb.Hedge_DMemWriteClient
@@ -45,25 +46,26 @@ type DistMem struct {
 }
 
 type writerT struct {
-	lo  bool // local write only
-	dm  *DistMem
-	ch  chan []byte
-	off int32
+	lo bool // local write only
+	dm *DistMem
+	ch chan []byte
+	on int32
 }
 
 func (w *writerT) Write(data []byte) { w.ch <- data }
 
 func (w *writerT) Close() {
-	if atomic.LoadInt32(&w.off) > 0 {
+	if atomic.LoadInt32(&w.on) == 0 {
 		return
 	}
 
 	close(w.ch)
-	atomic.AddInt32(&w.off, 1)
+	atomic.StoreInt32(&w.on, 0)
 }
 
 func (w *writerT) start() {
 	go func() {
+		atomic.StoreInt32(&w.on, 1)
 		ctx := context.Background()
 		var all int
 		var normCount int
@@ -83,23 +85,30 @@ func (w *writerT) start() {
 					continue
 				}
 
-				if w.dm.meta[node].conn == nil {
-					host, port, _ := net.SplitHostPort(nextName)
-					pi, _ := strconv.Atoi(port)
-					nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
+				if atomic.LoadInt32(&w.dm.meta[node].grpc) == 0 {
+					func() error {
+						host, port, _ := net.SplitHostPort(nextName)
+						pi, _ := strconv.Atoi(port)
+						nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
 
-					var opts []grpc.DialOption
-					opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-					w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
-					if err != nil {
-						w.dm.op.logger.Println("NewClient failed:", nextName, err)
-					}
+						var opts []grpc.DialOption
+						opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+						w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
+						if err != nil {
+							w.dm.op.logger.Println("NewClient failed:", nextName, err)
+							return err
+						}
 
-					w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
-					w.dm.meta[node].stream, err = w.dm.meta[node].client.DMemWrite(ctx)
-					if err != nil {
-						w.dm.op.logger.Println("DMemWrite failed:", nextName, err)
-					}
+						w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
+						w.dm.meta[node].stream, err = w.dm.meta[node].client.DMemWrite(ctx)
+						if err != nil {
+							w.dm.op.logger.Println("DMemWrite failed:", nextName, err)
+							return err
+						}
+
+						atomic.AddInt32(&w.dm.meta[node].grpc, 1)
+						return nil
+					}()
 				}
 			}
 
@@ -132,29 +141,43 @@ func (w *writerT) start() {
 			}
 		}
 
-		for k, v := range w.dm.data {
-			var size int
-			for _, j := range v {
-				size += len(j)
-			}
+		// for k, v := range w.dm.data {
+		// 	var size int
+		// 	for _, j := range v {
+		// 		size += len(j)
+		// 	}
 
-			w.dm.op.logger.Println(k, "sliceLen", len(v), "accumLen:", size)
+		// 	w.dm.op.logger.Println(k, "sliceLen", len(v), "accumLen:", size)
+		// }
+
+		// names := []string{}
+		// for k := range w.dm.op.dms {
+		// 	names = append(names, k)
+		// }
+
+		// w.dm.op.logger.Println(
+		// 	"all:", all,
+		// 	"add:", normCount+spillCount+noSpaceCount,
+		// 	"norm:", normCount,
+		// 	"spill:", spillCount,
+		// 	"noSpace:", noSpaceCount,
+		// 	"nodes:", w.dm.nodes,
+		// 	"dms:", names,
+		// )
+
+		nodes := []uint64{}
+		for k := range w.dm.meta {
+			nodes = append(nodes, k)
 		}
 
-		w.dm.op.logger.Println(
-			"all:", all,
-			"add:", normCount+spillCount+noSpaceCount,
-			"norm:", normCount,
-			"spill:", spillCount,
-			"noSpace:", noSpaceCount,
-			"nodes:", w.dm.nodes,
-			"meta:", w.dm.meta,
-		)
+		for _, n := range nodes {
+			atomic.StoreInt32(&w.dm.meta[n].grpc, 0)
+			if w.dm.meta[n].stream != nil {
+				w.dm.meta[n].stream.CloseSend()
+			}
 
-		for _, v := range w.dm.meta {
-			if v.conn != nil {
-				v.stream.CloseSend()
-				v.conn.Close()
+			if w.dm.meta[n].conn != nil {
+				w.dm.meta[n].conn.Close()
 			}
 		}
 	}()
@@ -165,15 +188,19 @@ type writerOptionsT struct {
 }
 
 func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
-	ref := func() bool {
+	on := func() bool {
 		dm.Lock()
-		ok := dm.writer != nil
+		var on bool
+		if dm.writer != nil {
+			on = atomic.LoadInt32(&dm.writer.on) != 0
+		}
+
 		dm.Unlock()
-		return ok
+		return on
 	}()
 
-	if ref {
-		return nil, fmt.Errorf("can only have one writer")
+	if on {
+		return nil, fmt.Errorf("only one active writer allowed")
 	}
 
 	var localOnly bool
@@ -255,7 +282,7 @@ func (dm *DistMem) me() uint64 { return dm.hasher.Sum64([]byte(dm.op.Name())) }
 
 func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	dm := &DistMem{
-		Name: fmt.Sprintf("%v/%v", op.Name(), name),
+		Name: name,
 		op:   op,
 		meta: make(map[uint64]*metaT),
 		data: map[uint64][][]byte{},
