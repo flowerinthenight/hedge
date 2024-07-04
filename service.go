@@ -131,8 +131,13 @@ loop:
 		}
 
 		name := in.Meta[metaName]
-		limit, _ := strconv.ParseUint(in.Meta[metaLimit], 10, 64)
-		s.op.dms[name] = s.op.NewDistMem(name, Limit{MemLimit: limit})
+		mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
+		dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
+		s.op.dms[name] = s.op.NewDistMem(name, Limit{
+			MemLimit:  mlimit,
+			DiskLimit: dlimit,
+		})
+
 		if writer == nil {
 			writer, _ = s.op.dms[name].Writer(&writerOptionsT{
 				LocalOnly: true,
@@ -162,8 +167,13 @@ func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
 	}
 
 	name := in.Meta[metaName]
-	limit, _ := strconv.ParseUint(in.Meta[metaLimit], 10, 64)
-	s.op.dms[name] = s.op.NewDistMem(name, Limit{MemLimit: limit})
+	mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
+	dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
+	s.op.dms[name] = s.op.NewDistMem(name, Limit{
+		MemLimit:  mlimit,
+		DiskLimit: dlimit,
+	})
+
 	reader, _ := s.op.dms[name].Reader()
 	out := make(chan []byte)
 	eg := new(errgroup.Group)

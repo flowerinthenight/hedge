@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -304,7 +305,7 @@ func main() {
 		}
 
 		slog.Info("start distmem:", "name", name)
-		limit := 7_000
+		limit := 14_000
 
 		dm := func() *hedge.DistMem {
 			dm := op.NewDistMem(name, hedge.Limit{
@@ -335,13 +336,32 @@ func main() {
 			out := make(chan []byte)
 			eg := new(errgroup.Group)
 			eg.Go(func() error {
-				var i, n int
+				var i, n, total int
 				for d := range out {
+					ss := strings.Split(string(d), "_")
+					if len(ss) != 3 {
+						slog.Error("bad fmt:", "len", len(ss))
+						continue
+					}
+
+					t, err := strconv.Atoi(ss[0])
+					if err != nil {
+						slog.Error("Atoi failed:", "err", err)
+						continue
+					}
+
+					total += t
+					_, err = time.Parse(time.RFC3339, ss[2])
+					if err != nil {
+						slog.Error("Parse failed:", "err", err)
+						continue
+					}
+
 					n += len(d)
 					i++
 				}
 
-				slog.Info("read_dm:", "i", i, "n", n)
+				slog.Info("read_dm:", "i", i, "n", n, "total", total)
 				return nil
 			})
 

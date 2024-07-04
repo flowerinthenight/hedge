@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -20,8 +21,9 @@ import (
 )
 
 const (
-	metaName  = "name"
-	metaLimit = "limit"
+	metaName      = "name"
+	metaMemLimit  = "mlimit"
+	metaDiskLimit = "dlimit"
 )
 
 type metaT struct {
@@ -61,7 +63,10 @@ type writerT struct {
 	dm *DistMem
 	ch chan []byte
 	on int32
+	xx int64 // fails
 }
+
+func (w *writerT) Fails() int64 { return atomic.LoadInt64(&w.xx) }
 
 func (w *writerT) Write(data []byte) { w.ch <- data }
 
@@ -80,15 +85,15 @@ func (w *writerT) start() {
 		atomic.StoreInt32(&w.on, 1)
 		ctx := context.Background()
 		var tmem, tdisk, tnet time.Duration
-		var all int
-		var normCount int
+		var allCount int
+		var memCount int
 		var diskCount int
 		var netCount int
-		var noSpaceCount int
 		node := w.dm.nodes[0]
 		var file *os.File
+
 		for data := range w.ch {
-			all++
+			allCount++
 			var err error
 			var nextName string
 			msize := atomic.LoadUint64(&w.dm.meta[node].msize)
@@ -96,11 +101,11 @@ func (w *writerT) start() {
 			dsize := atomic.LoadUint64(&w.dm.meta[node].dsize)
 			dlimit := atomic.LoadUint64(&w.dm.dlimit)
 
-			// Let's go to the next node.
-			if !w.lo && msize > 0 && msize >= mlimit && dsize > 0 && dsize >= dlimit {
+			// Local (or next hop) is full. Go to the next node.
+			if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
 				nextName, node = w.dm.nextNode()
 				if nextName == "" {
-					noSpaceCount++
+					atomic.AddInt64(&w.xx, 1)
 					continue
 				}
 
@@ -137,8 +142,9 @@ func (w *writerT) start() {
 				s := time.Now()
 				err := w.dm.meta[node].writer.Send(&pb.Payload{
 					Meta: map[string]string{
-						metaName:  w.dm.Name,
-						metaLimit: fmt.Sprintf("%v", w.dm.mlimit),
+						metaName:      w.dm.Name,
+						metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit),
+						metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit),
 					},
 					Data: data,
 				})
@@ -152,7 +158,7 @@ func (w *writerT) start() {
 			default:
 				if msize < mlimit {
 					// Use local memory.
-					normCount++
+					memCount++
 					s := time.Now()
 					if _, ok := w.dm.data[node]; !ok {
 						w.dm.data[node] = [][]byte{}
@@ -175,9 +181,13 @@ func (w *writerT) start() {
 					}
 
 					if ok {
-						n, _ := file.Write(data)
-						w.dm.locs = append(w.dm.locs, n)
-						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
+						n, err := file.Write(data)
+						if err != nil {
+							slog.Error("Write failed:", "node", node, "err", err)
+						} else {
+							w.dm.locs = append(w.dm.locs, n)
+							atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
+						}
 					}
 
 					tdisk += time.Since(s)
@@ -186,31 +196,31 @@ func (w *writerT) start() {
 		}
 
 		for k, v := range w.dm.data {
-			slog.Info("mem:", "node", k, "sliceLen", len(v))
+			w.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
 		}
 
+		file.Sync()
 		file.Close()
-		slog.Info("file:", "locs", len(w.dm.locs))
+		w.dm.op.logger.Printf("locs=%v", len(w.dm.locs))
 
 		names := []string{}
 		for k := range w.dm.op.dms {
 			names = append(names, k)
 		}
 
-		slog.Info(
-			"counts:",
-			"all", all,
-			"add", normCount+diskCount+netCount+noSpaceCount,
-			"norm", normCount,
-			"disk", diskCount,
-			"net", netCount,
-			"nospace", noSpaceCount,
-			"nodes", w.dm.nodes,
-			"dms", names,
-			"tmem", tmem,
-			"tdisk", tdisk,
-			"tnet", tnet,
-		)
+		var m strings.Builder
+		fmt.Fprintf(&m, "all=%v, ", allCount)
+		fmt.Fprintf(&m, "add=%v, ", memCount+diskCount+netCount+int(w.Fails()))
+		fmt.Fprintf(&m, "mem=%v, ", memCount)
+		fmt.Fprintf(&m, "disk=%v, ", diskCount)
+		fmt.Fprintf(&m, "net=%v, ", netCount)
+		fmt.Fprintf(&m, "fails=%v, ", w.Fails())
+		fmt.Fprintf(&m, "nodes=%v, ", w.dm.nodes)
+		fmt.Fprintf(&m, "dms=%v, ", names)
+		fmt.Fprintf(&m, "tmem=%v, ", tmem)
+		fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
+		fmt.Fprintf(&m, "tnet=%v", tnet)
+		w.dm.op.logger.Println(m.String())
 
 		// nodes := []uint64{}
 		// for k := range w.dm.meta {
@@ -275,8 +285,9 @@ func (r *readerT) Read(out chan []byte) {
 
 				err = r.dm.meta[node].reader.Send(&pb.Payload{
 					Meta: map[string]string{
-						metaName:  r.dm.Name,
-						metaLimit: fmt.Sprintf("%v", r.dm.mlimit),
+						metaName:      r.dm.Name,
+						metaMemLimit:  fmt.Sprintf("%v", r.dm.mlimit),
+						metaDiskLimit: fmt.Sprintf("%v", r.dm.dlimit),
 					},
 				})
 
@@ -326,7 +337,7 @@ func (r *readerT) Read(out chan []byte) {
 							b := make([]byte, n)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
-								slog.Error("ReadAt failed:", "err", err)
+								slog.Error("ReadAt failed:", "node", node, "err", err)
 							}
 
 							out <- b
@@ -339,7 +350,16 @@ func (r *readerT) Read(out chan []byte) {
 			}
 		}
 
-		slog.Info("perf:", "tmem", tmem, "tdisk", tdisk, "tnet", tnet)
+		for k, v := range r.dm.data {
+			r.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
+		}
+
+		var m strings.Builder
+		fmt.Fprintf(&m, "locs=%v, ", len(r.dm.locs))
+		fmt.Fprintf(&m, "tmem=%v, ", tmem)
+		fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
+		fmt.Fprintf(&m, "tnet=%v", tnet)
+		r.dm.op.logger.Println(m.String())
 	}()
 }
 
@@ -401,7 +421,7 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	}
 
 	if dm.dlimit == 0 {
-		dm.dlimit = 2_147_483_648 // 2GB by default
+		dm.dlimit = 1 << 30 // 1GB by default
 	}
 
 	return dm

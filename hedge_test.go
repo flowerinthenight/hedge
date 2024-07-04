@@ -13,6 +13,10 @@ const (
 	db = "projects/test-project/instances/test-instance/databases/testdb"
 )
 
+func TestAny(t *testing.T) {
+	// TODO:
+}
+
 func TestBasic(t *testing.T) {
 	ctx := context.Background()
 	client, err := spanner.NewClient(ctx, db)
