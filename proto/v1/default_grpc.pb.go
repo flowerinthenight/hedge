@@ -22,6 +22,7 @@ type HedgeClient interface {
 	Broadcast(ctx context.Context, opts ...grpc.CallOption) (Hedge_BroadcastClient, error)
 	DMemWrite(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemWriteClient, error)
 	DMemRead(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemReadClient, error)
+	DMemClear(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error)
 }
 
 type hedgeClient struct {
@@ -156,6 +157,15 @@ func (x *hedgeDMemReadClient) Recv() (*Payload, error) {
 	return m, nil
 }
 
+func (c *hedgeClient) DMemClear(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error) {
+	out := new(Payload)
+	err := c.cc.Invoke(ctx, "/hedge.proto.v1.Hedge/DMemClear", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HedgeServer is the server API for Hedge service.
 // All implementations must embed UnimplementedHedgeServer
 // for forward compatibility
@@ -164,6 +174,7 @@ type HedgeServer interface {
 	Broadcast(Hedge_BroadcastServer) error
 	DMemWrite(Hedge_DMemWriteServer) error
 	DMemRead(Hedge_DMemReadServer) error
+	DMemClear(context.Context, *Payload) (*Payload, error)
 	mustEmbedUnimplementedHedgeServer()
 }
 
@@ -182,6 +193,9 @@ func (UnimplementedHedgeServer) DMemWrite(Hedge_DMemWriteServer) error {
 }
 func (UnimplementedHedgeServer) DMemRead(Hedge_DMemReadServer) error {
 	return status.Errorf(codes.Unimplemented, "method DMemRead not implemented")
+}
+func (UnimplementedHedgeServer) DMemClear(context.Context, *Payload) (*Payload, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DMemClear not implemented")
 }
 func (UnimplementedHedgeServer) mustEmbedUnimplementedHedgeServer() {}
 
@@ -300,13 +314,36 @@ func (x *hedgeDMemReadServer) Recv() (*Payload, error) {
 	return m, nil
 }
 
+func _Hedge_DMemClear_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Payload)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HedgeServer).DMemClear(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/hedge.proto.v1.Hedge/DMemClear",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HedgeServer).DMemClear(ctx, req.(*Payload))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Hedge_ServiceDesc is the grpc.ServiceDesc for Hedge service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Hedge_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "hedge.proto.v1.Hedge",
 	HandlerType: (*HedgeServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "DMemClear",
+			Handler:    _Hedge_DMemClear_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Send",

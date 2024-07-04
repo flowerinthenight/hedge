@@ -1,20 +1,23 @@
 package hedge
 
 import (
+	"context"
 	"io"
 	"strconv"
 
-	protov1 "github.com/flowerinthenight/hedge/proto/v1"
+	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type service struct {
 	op *Op
 
-	protov1.UnimplementedHedgeServer
+	pb.UnimplementedHedgeServer
 }
 
-func (s *service) Send(hs protov1.Hedge_SendServer) error {
+func (s *service) Send(hs pb.Hedge_SendServer) error {
 	ctx := hs.Context()
 	g := new(errgroup.Group)
 	g.Go(func() error {
@@ -60,7 +63,7 @@ func (s *service) Send(hs protov1.Hedge_SendServer) error {
 	return g.Wait()
 }
 
-func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
+func (s *service) Broadcast(hs pb.Hedge_BroadcastServer) error {
 	ctx := hs.Context()
 	g := new(errgroup.Group)
 	g.Go(func() error {
@@ -106,7 +109,7 @@ func (s *service) Broadcast(hs protov1.Hedge_BroadcastServer) error {
 	return g.Wait()
 }
 
-func (s *service) DMemWrite(hs protov1.Hedge_DMemWriteServer) error {
+func (s *service) DMemWrite(hs pb.Hedge_DMemWriteServer) error {
 	var err error
 	ctx := hs.Context()
 	var writer *writerT
@@ -154,7 +157,7 @@ loop:
 	return err
 }
 
-func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
+func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	var err error
 	in, err := hs.Recv()
 	if err == io.EOF {
@@ -179,7 +182,7 @@ func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
 		for d := range out {
-			hs.Send(&protov1.Payload{Data: d})
+			hs.Send(&pb.Payload{Data: d})
 		}
 
 		return nil
@@ -189,4 +192,8 @@ func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
 	eg.Wait()
 
 	return nil
+}
+
+func (s *service) DMemClear(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DMemClear not implemented")
 }
