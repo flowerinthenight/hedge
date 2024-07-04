@@ -37,8 +37,8 @@ type metaT struct {
 }
 
 type DistMemOptions struct {
-	MemLimit  uint64 // size limit (bytes) before spill-over
-	DiskLimit uint64 // size limit (bytes) before spill-over
+	MemLimit  uint64 // mem limit (bytes) before spill-over
+	DiskLimit uint64 // disk limit (bytes) before spill-over
 }
 
 type DistMem struct {
