@@ -150,40 +150,33 @@ loop:
 }
 
 func (s *service) DMemRead(hs protov1.Hedge_DMemReadServer) error {
-	ctx := hs.Context()
-	g := new(errgroup.Group)
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
+	var err error
+	in, err := hs.Recv()
+	if err == io.EOF {
+		return nil
+	}
 
-			in, err := hs.Recv()
-			if err == io.EOF {
-				return nil
-			}
+	if err != nil {
+		s.op.logger.Println("service: Recv failed:", err)
+		return nil
+	}
 
-			if err != nil {
-				return err
-			}
-
-			_ = in
+	name := in.Meta[metaName]
+	limit, _ := strconv.ParseUint(in.Meta[metaLimit], 10, 64)
+	s.op.dms[name] = s.op.NewDistMem(name, limit) // ensure
+	reader, _ := s.op.dms[name].Reader()
+	out := make(chan []byte)
+	eg := new(errgroup.Group)
+	eg.Go(func() error {
+		for d := range out {
+			hs.Send(&protov1.Payload{Data: d})
 		}
+
+		return nil
 	})
 
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
+	reader.Read(out)
+	eg.Wait()
 
-			hs.Send(&protov1.Payload{})
-		}
-	})
-
-	return g.Wait()
+	return nil
 }

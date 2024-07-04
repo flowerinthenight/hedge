@@ -3,6 +3,8 @@ package hedge
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -24,7 +26,8 @@ type metaT struct {
 	grpc   int32
 	conn   *grpc.ClientConn
 	client pb.HedgeClient
-	stream pb.Hedge_DMemWriteClient
+	writer pb.Hedge_DMemWriteClient
+	reader pb.Hedge_DMemReadClient
 }
 
 type DistMemOptions struct {
@@ -40,9 +43,10 @@ type DistMem struct {
 	nodes  []uint64          // 0=local, ...=spillover
 	meta   map[uint64]*metaT // per-node metadata
 	limit  uint64
-	writer *writerT
 	hasher hashT
 	data   map[uint64][][]byte
+	wmtx   *sync.Mutex
+	writer *writerT
 }
 
 type writerT struct {
@@ -61,6 +65,7 @@ func (w *writerT) Close() {
 
 	close(w.ch)
 	atomic.StoreInt32(&w.on, 0)
+	w.dm.wmtx.Unlock()
 }
 
 func (w *writerT) start() {
@@ -100,7 +105,7 @@ func (w *writerT) start() {
 						}
 
 						w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
-						w.dm.meta[node].stream, err = w.dm.meta[node].client.DMemWrite(ctx)
+						w.dm.meta[node].writer, err = w.dm.meta[node].client.DMemWrite(ctx)
 						if err != nil {
 							w.dm.op.logger.Println("DMemWrite failed:", nextName, err)
 							return err
@@ -115,7 +120,7 @@ func (w *writerT) start() {
 			switch {
 			case !w.lo && node != w.dm.me():
 				spillCount++
-				err := w.dm.meta[node].stream.Send(&pb.Payload{
+				err := w.dm.meta[node].writer.Send(&pb.Payload{
 					Meta: map[string]string{
 						metaName:  w.dm.Name,
 						metaLimit: fmt.Sprintf("%v", w.dm.limit),
@@ -141,40 +146,40 @@ func (w *writerT) start() {
 			}
 		}
 
-		// for k, v := range w.dm.data {
-		// 	w.dm.op.logger.Println(k, "sliceLen", len(v))
-		// }
-
-		// names := []string{}
-		// for k := range w.dm.op.dms {
-		// 	names = append(names, k)
-		// }
-
-		// w.dm.op.logger.Println(
-		// 	"all:", all,
-		// 	"add:", normCount+spillCount+noSpaceCount,
-		// 	"norm:", normCount,
-		// 	"spill:", spillCount,
-		// 	"noSpace:", noSpaceCount,
-		// 	"nodes:", w.dm.nodes,
-		// 	"dms:", names,
-		// )
-
-		nodes := []uint64{}
-		for k := range w.dm.meta {
-			nodes = append(nodes, k)
+		for k, v := range w.dm.data {
+			w.dm.op.logger.Println(k, "sliceLen", len(v))
 		}
 
-		for _, n := range nodes {
-			atomic.StoreInt32(&w.dm.meta[n].grpc, 0)
-			if w.dm.meta[n].stream != nil {
-				w.dm.meta[n].stream.CloseSend()
-			}
-
-			if w.dm.meta[n].conn != nil {
-				w.dm.meta[n].conn.Close()
-			}
+		names := []string{}
+		for k := range w.dm.op.dms {
+			names = append(names, k)
 		}
+
+		w.dm.op.logger.Println(
+			"all:", all,
+			"add:", normCount+spillCount+noSpaceCount,
+			"norm:", normCount,
+			"spill:", spillCount,
+			"noSpace:", noSpaceCount,
+			"nodes:", w.dm.nodes,
+			"dms:", names,
+		)
+
+		// nodes := []uint64{}
+		// for k := range w.dm.meta {
+		// 	nodes = append(nodes, k)
+		// }
+
+		// for _, n := range nodes {
+		// 	atomic.StoreInt32(&w.dm.meta[n].grpc, 0)
+		// 	if w.dm.meta[n].writer != nil {
+		// 		w.dm.meta[n].writer.CloseSend()
+		// 	}
+
+		// 	if w.dm.meta[n].conn != nil {
+		// 		w.dm.meta[n].conn.Close()
+		// 	}
+		// }
 	}()
 }
 
@@ -183,21 +188,7 @@ type writerOptionsT struct {
 }
 
 func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
-	on := func() bool {
-		dm.Lock()
-		var on bool
-		if dm.writer != nil {
-			on = atomic.LoadInt32(&dm.writer.on) != 0
-		}
-
-		dm.Unlock()
-		return on
-	}()
-
-	if on {
-		return nil, fmt.Errorf("only one active writer allowed")
-	}
-
+	dm.wmtx.Lock()
 	var localOnly bool
 	if len(opts) > 0 {
 		localOnly = opts[0].LocalOnly
@@ -215,40 +206,62 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 	return dm.writer, nil
 }
 
-type readerT struct {
-	li int64
-	dm *DistMem
-	w  *writerT
+type readerT struct{ dm *DistMem }
+
+func (r *readerT) Read(out chan []byte) {
+	go func() {
+		defer close(out)
+		ctx := context.Background()
+		for _, node := range r.dm.nodes {
+			var err error
+			switch {
+			case node != r.dm.me():
+				func() {
+					slog.Info("read: create reader for:", "node", node)
+					r.dm.meta[node].reader, err = r.dm.meta[node].client.DMemRead(ctx)
+					if err != nil {
+						r.dm.op.logger.Println("DMemRead failed:", err)
+						return
+					}
+				}()
+
+				err = r.dm.meta[node].reader.Send(&pb.Payload{
+					Meta: map[string]string{
+						metaName:  r.dm.Name,
+						metaLimit: fmt.Sprintf("%v", r.dm.limit),
+					},
+				})
+
+				if err != nil {
+					r.dm.op.logger.Println("Send failed:", err)
+				}
+
+				var n int
+				for {
+					in, err := r.dm.meta[node].reader.Recv()
+					if err == io.EOF {
+						break
+					}
+
+					if err != nil {
+						break
+					}
+
+					out <- in.Data
+					n++
+				}
+
+				slog.Info("from_svc:", "n", n, "node", node)
+			default: // local
+				for _, d := range r.dm.data[node] {
+					out <- d
+				}
+			}
+		}
+	}()
 }
 
-// func (r *readerT) Next() bool {
-// 	ni := atomic.AddInt64(&r.li, 1)
-// 	return ni <= atomic.LoadInt64(&r.w.li)
-// }
-
-// func (r *readerT) Read() []byte {
-// 	node := r.dm.nodes[0]
-// 	i := atomic.LoadInt64(&r.li)
-// 	if _, ok1 := r.dm.data[node]; ok1 {
-// 		if _, ok2 := r.dm.data[node][i]; ok2 {
-// 			return r.dm.data[node][i]
-// 		}
-// 	}
-
-// 	return nil
-// }
-
-// func (r *readerT) LastIndex() int64 { return atomic.LoadInt64(&r.li) }
-
-// func (dm *DistMem) Reader() (*readerT, error) {
-// 	r := &readerT{
-// 		li: -1,
-// 		dm: dm,
-// 		w:  dm.writer,
-// 	}
-
-// 	return r, nil
-// }
+func (dm *DistMem) Reader() (*readerT, error) { return &readerT{dm: dm}, nil }
 
 func (dm *DistMem) nextNode() (string, uint64) {
 	var mb string
@@ -281,6 +294,7 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		op:   op,
 		meta: make(map[uint64]*metaT),
 		data: map[uint64][][]byte{},
+		wmtx: &sync.Mutex{},
 	}
 
 	dm.nodes = []uint64{dm.me()} // 0 = local

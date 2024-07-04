@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -20,6 +21,7 @@ import (
 	"github.com/flowerinthenight/hedge"
 	protov1 "github.com/flowerinthenight/hedge/proto/v1"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -297,29 +299,35 @@ func main() {
 		}(time.Now())
 
 		name := "distmem_" + time.Now().Format(time.RFC3339)
+		rname := r.URL.Query().Get("name")
+		if rname != "" {
+			name = rname
+		}
+
 		slog.Info("start distmem:", "name", name)
 		limit := 5_000
 
-		func() {
+		dm := func() *hedge.DistMem {
 			var t time.Duration
 			s := time.Now()
 			dm := op.NewDistMem(name, 150_000)
 			writer, err := dm.Writer()
 			if err != nil {
 				slog.Error("Writer failed:", "err", err)
-				return
+				return nil
 			}
 
 			defer writer.Close()
 			var n int
 			for i := 0; i < limit; i++ {
-				data := fmt.Sprintf("1_%v_%v", uuid.NewString(), uuid.NewString())
+				data := fmt.Sprintf("2_%v_%v", uuid.NewString(), time.Now().Format(time.RFC3339))
 				n += len([]byte(data))
 				writer.Write([]byte(data))
 			}
 
 			t = t + time.Since(s)
 			slog.Info("write_dm:", "accumSize", n, "took", t)
+			return dm
 		}()
 
 		func() {
@@ -332,7 +340,7 @@ func main() {
 
 			var n int
 			for i := 0; i < limit; i++ {
-				data := fmt.Sprintf("1_%v_%v", uuid.NewString(), uuid.NewString())
+				data := fmt.Sprintf("2_%v_%v\n", uuid.NewString(), time.Now().Format(time.RFC3339))
 				n += len([]byte(data))
 				f.Write([]byte(data))
 			}
@@ -340,6 +348,58 @@ func main() {
 			f.Close()
 			t = t + time.Since(s)
 			slog.Info("write_file:", "accumSize", n, "took", t)
+		}()
+
+		func() {
+			for x := 0; x < 2; x++ {
+				var t time.Duration
+				s := time.Now()
+				reader, _ := dm.Reader()
+				out := make(chan []byte)
+				eg := new(errgroup.Group)
+				eg.Go(func() error {
+					var i, n int
+					for d := range out {
+						n += len(d)
+						i++
+					}
+
+					slog.Info("read_dm:", "i", i, "n", n)
+					return nil
+				})
+
+				reader.Read(out)
+				eg.Wait()
+				t = t + time.Since(s)
+				slog.Info("read_dm:", "took", t)
+			}
+		}()
+
+		func() {
+			var t time.Duration
+			s := time.Now()
+			f, err := os.Open(name)
+			if err != nil {
+				slog.Error(err.Error())
+				return
+			}
+
+			defer f.Close()
+			scanner := bufio.NewScanner(f)
+			var i, n int
+			for scanner.Scan() {
+				d := scanner.Bytes()
+				n += len(d)
+				i++
+			}
+
+			if err := scanner.Err(); err != nil {
+				slog.Error(err.Error())
+				return
+			}
+
+			t = t + time.Since(s)
+			slog.Info("read_file:", "took", t)
 		}()
 
 		// t = 0
