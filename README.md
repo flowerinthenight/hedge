@@ -21,6 +21,8 @@ A `Send()` API is also provided for members to be able to send simple request/re
 
 A `Broadcast()` API is also available for all pods. Note that due to the nature of k8s deployments (pods come and go) and the internal heartbeat delays, some pods might not receive the broadcast message at call time, although all pods will have the complete broadcast target list eventually. `hedge` uses a combination of heartbeats and broadcasts to propagate member information to all pods; non-leaders send liveness heartbeats to the leader while the leader broadcasts active members to all pods. A streaming equivalent (gRPC) is also available.
 
+An experimental linked storage is also supported currently used in bursty, load-process-discard type of use case(s). A linked storage is a combined memory area and disk area between nodes. For example, a node can define a linked storage of 1GB memory and 1GB disk. If there are 100 pods running under `hedge`, that's a combined storage of (1GB + 1GB) * 100. During writes, `hedge` handles the data distribution between local RAM, disk, and across the network.
+
 Finally, a distributed semaphore is also provided through the `NewSemaphore()`, `[Try]Acquire()`, and `Release()` APIs.
 
 ## Prerequisites
