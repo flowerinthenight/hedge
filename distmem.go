@@ -142,12 +142,7 @@ func (w *writerT) start() {
 		}
 
 		// for k, v := range w.dm.data {
-		// 	var size int
-		// 	for _, j := range v {
-		// 		size += len(j)
-		// 	}
-
-		// 	w.dm.op.logger.Println(k, "sliceLen", len(v), "accumLen:", size)
+		// 	w.dm.op.logger.Println(k, "sliceLen", len(v))
 		// }
 
 		// names := []string{}
