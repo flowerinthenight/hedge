@@ -171,23 +171,17 @@ func (w *writerT) start() {
 					// Use local disk.
 					diskCount++
 					s := time.Now()
-					ok := true
 					if file == nil {
 						flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-						file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
-						if err != nil {
-							ok = false
-						}
+						file, _ = os.OpenFile(w.dm.localFile(), flag, 0644)
 					}
 
-					if ok {
-						n, err := file.Write(data)
-						if err != nil {
-							slog.Error("Write failed:", "node", node, "err", err)
-						} else {
-							w.dm.locs = append(w.dm.locs, n)
-							atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
-						}
+					n, err := file.Write(data)
+					if err != nil {
+						atomic.AddInt64(&w.xx, 1)
+					} else {
+						w.dm.locs = append(w.dm.locs, n)
+						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
 					}
 
 					tdisk += time.Since(s)
@@ -327,7 +321,7 @@ func (r *readerT) Read(out chan []byte) {
 						s := time.Now()
 						ra, err := mmap.Open(r.dm.localFile())
 						if err != nil {
-							slog.Error("Open failed:", "err", err)
+							r.dm.op.logger.Println("Open failed:", err)
 							return
 						}
 
@@ -337,7 +331,7 @@ func (r *readerT) Read(out chan []byte) {
 							b := make([]byte, n)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
-								slog.Error("ReadAt failed:", "node", node, "err", err)
+								r.dm.op.logger.Println("ReadAt failed:", err)
 							}
 
 							out <- b
