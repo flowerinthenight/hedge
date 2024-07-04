@@ -550,7 +550,12 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 	return &Semaphore{name, limit, op}, nil
 }
 
-func (op *Op) NewDistMem(name string, limit uint64) *DistMem {
+type Limit struct {
+	MemLimit  uint64
+	DiskLimit uint64
+}
+
+func (op *Op) NewDistMem(name string, limit Limit) *DistMem {
 	if _, ok := op.dms[name]; ok {
 		return op.dms[name]
 	}
@@ -558,7 +563,10 @@ func (op *Op) NewDistMem(name string, limit uint64) *DistMem {
 	op.dms[name] = newDistMem(
 		name,
 		op,
-		&DistMemOptions{Limit: limit},
+		&DistMemOptions{
+			MemLimit:  limit.MemLimit,
+			DiskLimit: limit.DiskLimit,
+		},
 	)
 
 	return op.dms[name]

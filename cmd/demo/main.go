@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -305,12 +304,14 @@ func main() {
 		}
 
 		slog.Info("start distmem:", "name", name)
-		limit := 5_000
+		limit := 7_000
 
 		dm := func() *hedge.DistMem {
-			var t time.Duration
-			s := time.Now()
-			dm := op.NewDistMem(name, 150_000)
+			dm := op.NewDistMem(name, hedge.Limit{
+				MemLimit:  150_000,
+				DiskLimit: 120_000,
+			})
+
 			writer, err := dm.Writer()
 			if err != nil {
 				slog.Error("Writer failed:", "err", err)
@@ -325,106 +326,29 @@ func main() {
 				writer.Write([]byte(data))
 			}
 
-			t = t + time.Since(s)
-			slog.Info("write_dm:", "accumSize", n, "took", t)
+			slog.Info("write_dm:", "accumSize", n)
 			return dm
 		}()
 
 		func() {
-			var t time.Duration
-			s := time.Now()
-			f, err := os.Create(name)
-			if err != nil {
-				return
-			}
+			reader, _ := dm.Reader()
+			out := make(chan []byte)
+			eg := new(errgroup.Group)
+			eg.Go(func() error {
+				var i, n int
+				for d := range out {
+					n += len(d)
+					i++
+				}
 
-			var n int
-			for i := 0; i < limit; i++ {
-				data := fmt.Sprintf("2_%v_%v\n", uuid.NewString(), time.Now().Format(time.RFC3339))
-				n += len([]byte(data))
-				f.Write([]byte(data))
-			}
+				slog.Info("read_dm:", "i", i, "n", n)
+				return nil
+			})
 
-			f.Close()
-			t = t + time.Since(s)
-			slog.Info("write_file:", "accumSize", n, "took", t)
+			reader.Read(out)
+			eg.Wait()
 		}()
 
-		func() {
-			for x := 0; x < 2; x++ {
-				var t time.Duration
-				s := time.Now()
-				reader, _ := dm.Reader()
-				out := make(chan []byte)
-				eg := new(errgroup.Group)
-				eg.Go(func() error {
-					var i, n int
-					for d := range out {
-						n += len(d)
-						i++
-					}
-
-					slog.Info("read_dm:", "i", i, "n", n)
-					return nil
-				})
-
-				reader.Read(out)
-				eg.Wait()
-				t = t + time.Since(s)
-				slog.Info("read_dm:", "took", t)
-			}
-		}()
-
-		func() {
-			var t time.Duration
-			s := time.Now()
-			f, err := os.Open(name)
-			if err != nil {
-				slog.Error(err.Error())
-				return
-			}
-
-			defer f.Close()
-			scanner := bufio.NewScanner(f)
-			var i, n int
-			for scanner.Scan() {
-				d := scanner.Bytes()
-				n += len(d)
-				i++
-			}
-
-			if err := scanner.Err(); err != nil {
-				slog.Error(err.Error())
-				return
-			}
-
-			t = t + time.Since(s)
-			slog.Info("read_file:", "took", t)
-		}()
-
-		// t = 0
-		// s := time.Now()
-
-		// reader, _ := dm.Reader()
-		// var oldLastIndex int64
-		// for {
-		// 	if !reader.Next() {
-		// 		slog.Info("next done")
-		// 		break
-		// 	}
-
-		// 	li := reader.LastIndex()
-		// 	if (li - oldLastIndex) != 1 {
-		// 		slog.Info("wrong index:", "index", li, "old", oldLastIndex)
-		// 	}
-
-		// 	data := reader.Read()
-		// 	n += len(data)
-		// 	oldLastIndex = li
-		// }
-
-		// t = t + time.Since(s)
-		// slog.Info("read_lastIndex:", "val", reader.LastIndex(), "n", n, "t", t)
 		w.Write([]byte("OK"))
 	})
 
