@@ -359,6 +359,28 @@ func (r *readerT) Read(out chan []byte) {
 
 func (dm *DistMem) Reader() (*readerT, error) { return &readerT{dm: dm}, nil }
 
+func (dm *DistMem) Clear() {
+	nodes := []uint64{}
+	for k := range dm.meta {
+		nodes = append(nodes, k)
+	}
+
+	ctx := context.Background()
+	for _, n := range nodes {
+		if dm.meta[n].conn != nil {
+			dm.meta[n].client.DMemClear(ctx, &pb.Payload{
+				Meta: map[string]string{metaName: dm.Name},
+			})
+		}
+	}
+
+	dm.nodes = []uint64{}
+	dm.meta = make(map[uint64]*metaT)
+	dm.data = map[uint64][][]byte{}
+	dm.locs = []int{}
+	os.Remove(dm.localFile())
+}
+
 func (dm *DistMem) nextNode() (string, uint64) {
 	var mb string
 	members := dm.op.Members()

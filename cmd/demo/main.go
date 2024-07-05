@@ -369,6 +369,7 @@ func main() {
 			eg.Wait()
 		}()
 
+		dm.Clear()
 		w.Write([]byte("OK"))
 	})
 

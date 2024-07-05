@@ -7,8 +7,6 @@ import (
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type service struct {
@@ -195,5 +193,7 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 }
 
 func (s *service) DMemClear(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DMemClear not implemented")
+	name := in.Meta[metaName]
+	s.op.dms[name].Clear()
+	return &pb.Payload{}, nil
 }
