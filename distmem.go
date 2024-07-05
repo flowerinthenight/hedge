@@ -1,6 +1,7 @@
 package hedge
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -40,21 +41,28 @@ type DistMemOptions struct {
 	DiskLimit uint64 // disk limit (bytes) before spill-over
 }
 
+type memT struct {
+	buf   *bytes.Buffer
+	data  []byte
+	mlocs []int
+}
+
 type DistMem struct {
 	sync.Mutex
 
 	Name string
 
 	op     *Op
-	nodes  []uint64            // 0=local, ...=spillover
-	meta   map[uint64]*metaT   // per-node metadata
-	mlimit uint64              // mem limit
-	dlimit uint64              // disk limit
-	hasher hashT               // for node id
-	data   map[uint64][][]byte // mem data
-	locs   []int               // disk lens, local only
-	wmtx   *sync.Mutex         // one active writer only
-	writer *writerT            // writer object
+	nodes  []uint64          // 0=local, ...=spillover
+	meta   map[uint64]*metaT // per-node metadata
+	mlimit uint64            // mem limit
+	dlimit uint64            // disk limit
+	hasher hashT             // for node id
+	data   map[uint64]*memT  // mem data
+	mlocs  []int             // mem offsets
+	dlocs  []int             // disk offsets
+	wmtx   *sync.Mutex       // one active writer only
+	writer *writerT          // writer object
 }
 
 type writerT struct {
@@ -165,11 +173,19 @@ func (w *writerT) start() {
 				if msize < mlimit {
 					// Use local memory.
 					if _, ok := w.dm.data[node]; !ok {
-						w.dm.data[node] = [][]byte{}
+						w.dm.data[node] = &memT{
+							data:  []byte{},
+							mlocs: []int{},
+						}
 					}
 
-					w.dm.data[node] = append(w.dm.data[node], data)
-					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
+					if w.dm.data[node].buf == nil {
+						w.dm.data[node].buf = bytes.NewBuffer(w.dm.data[node].data)
+					}
+
+					n, _ := w.dm.data[node].buf.Write(data)
+					w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, n)
+					atomic.AddUint64(&w.dm.meta[node].msize, uint64(n))
 				} else {
 					// Use local disk.
 					if file == nil {
@@ -186,12 +202,8 @@ func (w *writerT) start() {
 						w.err = fmt.Errorf("Write failed: %w", err)
 						w.Unlock()
 					} else {
-						w.dm.locs = append(w.dm.locs, n)
+						w.dm.dlocs = append(w.dm.dlocs, n)
 						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
-					}
-
-					if len(data) != n {
-						slog.Error("Write failed:", "in", len(data), "written", n)
 					}
 				}
 			}
@@ -229,7 +241,6 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 		localOnly = opts[0].LocalOnly
 	}
 
-	dm.Lock()
 	dm.writer = &writerT{
 		lo:   localOnly,
 		dm:   dm,
@@ -237,7 +248,6 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 		done: make(chan struct{}, 1),
 	}
 
-	dm.Unlock()
 	dm.writer.start()
 	return dm.writer, nil
 }
@@ -301,12 +311,12 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
-					for _, d := range r.dm.data[node] {
-						out <- d
+					for _, off := range r.dm.data[node].mlocs {
+						out <- r.dm.data[node].buf.Next(off)
 					}
 				}()
 
-				if len(r.dm.locs) > 0 {
+				if len(r.dm.dlocs) > 0 {
 					func() {
 						ra, err := mmap.Open(r.dm.localFile())
 						if err != nil {
@@ -318,7 +328,7 @@ func (r *readerT) Read(out chan []byte) {
 
 						defer ra.Close()
 						var off int64
-						for _, n := range r.dm.locs {
+						for _, n := range r.dm.dlocs {
 							b := make([]byte, n)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
@@ -392,7 +402,7 @@ func (dm *DistMem) nextNode() (string, uint64) {
 		mb = member
 		dm.nodes = append(dm.nodes, nn)
 		dm.meta[nn] = &metaT{}
-		dm.data[nn] = [][]byte{}
+		dm.data[nn] = &memT{data: []byte{}, mlocs: []int{}}
 		break
 	}
 
@@ -409,12 +419,12 @@ func (dm *DistMem) localFile() string {
 
 func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	dm := &DistMem{
-		Name: name,
-		op:   op,
-		meta: make(map[uint64]*metaT),
-		data: map[uint64][][]byte{},
-		locs: []int{},
-		wmtx: &sync.Mutex{},
+		Name:  name,
+		op:    op,
+		meta:  make(map[uint64]*metaT),
+		data:  map[uint64]*memT{},
+		dlocs: []int{},
+		wmtx:  &sync.Mutex{},
 	}
 
 	dm.nodes = []uint64{dm.me()} // 0 = local

@@ -305,7 +305,8 @@ func main() {
 		}
 
 		slog.Info("start distmem:", "name", name)
-		limit := 14_000
+		// limit := 14_000 // 4 pods, all
+		limit := 2_500
 
 		dm := func() *hedge.DistMem {
 			dm := op.NewDistMem(name, hedge.Limit{
@@ -327,7 +328,7 @@ func main() {
 				writer.Write([]byte(data))
 			}
 
-			slog.Info("write_dm:", "accumSize", n, "write_err", writer.Err())
+			slog.Info("write_dm:", "i", limit, "n", n, "write_err", writer.Err())
 			return dm
 		}()
 
