@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -59,14 +57,19 @@ type DistMem struct {
 }
 
 type writerT struct {
-	lo bool // local write only
-	dm *DistMem
-	ch chan []byte
-	on int32
-	xx int64 // fails
+	sync.Mutex
+	lo  bool // local write only
+	dm  *DistMem
+	ch  chan []byte
+	on  int32
+	err error
 }
 
-func (w *writerT) Fails() int64 { return atomic.LoadInt64(&w.xx) }
+func (w *writerT) Err() error {
+	w.Lock()
+	defer w.Unlock()
+	return w.err
+}
 
 func (w *writerT) Write(data []byte) { w.ch <- data }
 
@@ -89,6 +92,7 @@ func (w *writerT) start() {
 		var memCount int
 		var diskCount int
 		var netCount int
+		var nospaceCount int
 		node := w.dm.nodes[0]
 		var file *os.File
 
@@ -105,12 +109,15 @@ func (w *writerT) start() {
 			if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
 				nextName, node = w.dm.nextNode()
 				if nextName == "" {
-					atomic.AddInt64(&w.xx, 1)
+					nospaceCount++
+					w.Lock()
+					w.err = fmt.Errorf("cannot find next node")
+					w.Unlock()
 					continue
 				}
 
 				if atomic.LoadInt32(&w.dm.meta[node].grpc) == 0 {
-					func() error {
+					err = func() error {
 						host, port, _ := net.SplitHostPort(nextName)
 						pi, _ := strconv.Atoi(port)
 						nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
@@ -119,20 +126,24 @@ func (w *writerT) start() {
 						opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 						w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
 						if err != nil {
-							w.dm.op.logger.Println("NewClient failed:", nextName, err)
-							return err
+							return fmt.Errorf("NewClient (%v) failed: %w", nextName, err)
 						}
 
 						w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
 						w.dm.meta[node].writer, err = w.dm.meta[node].client.DMemWrite(ctx)
 						if err != nil {
-							w.dm.op.logger.Println("DMemWrite failed:", nextName, err)
-							return err
+							return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
 						}
 
 						atomic.AddInt32(&w.dm.meta[node].grpc, 1)
 						return nil
 					}()
+
+					if err != nil {
+						w.Lock()
+						w.err = err
+						w.Unlock()
+					}
 				}
 			}
 
@@ -150,7 +161,9 @@ func (w *writerT) start() {
 				})
 
 				if err != nil {
-					w.dm.op.logger.Println("spillover: Send failed:", err)
+					w.Lock()
+					w.err = fmt.Errorf("Send failed: %w", err)
+					w.Unlock()
 				}
 
 				atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
@@ -178,7 +191,9 @@ func (w *writerT) start() {
 
 					n, err := file.Write(data)
 					if err != nil {
-						atomic.AddInt64(&w.xx, 1)
+						w.Lock()
+						w.err = fmt.Errorf("Write failed: %w", err)
+						w.Unlock()
 					} else {
 						w.dm.locs = append(w.dm.locs, n)
 						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
@@ -189,32 +204,32 @@ func (w *writerT) start() {
 			}
 		}
 
-		for k, v := range w.dm.data {
-			w.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
-		}
+		// for k, v := range w.dm.data {
+		// 	w.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
+		// }
 
 		file.Sync()
 		file.Close()
-		w.dm.op.logger.Printf("locs=%v", len(w.dm.locs))
+		// w.dm.op.logger.Printf("locs=%v", len(w.dm.locs))
 
-		names := []string{}
-		for k := range w.dm.op.dms {
-			names = append(names, k)
-		}
+		// names := []string{}
+		// for k := range w.dm.op.dms {
+		// 	names = append(names, k)
+		// }
 
-		var m strings.Builder
-		fmt.Fprintf(&m, "all=%v, ", allCount)
-		fmt.Fprintf(&m, "add=%v, ", memCount+diskCount+netCount+int(w.Fails()))
-		fmt.Fprintf(&m, "mem=%v, ", memCount)
-		fmt.Fprintf(&m, "disk=%v, ", diskCount)
-		fmt.Fprintf(&m, "net=%v, ", netCount)
-		fmt.Fprintf(&m, "fails=%v, ", w.Fails())
-		fmt.Fprintf(&m, "nodes=%v, ", w.dm.nodes)
-		fmt.Fprintf(&m, "dms=%v, ", names)
-		fmt.Fprintf(&m, "tmem=%v, ", tmem)
-		fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
-		fmt.Fprintf(&m, "tnet=%v", tnet)
-		w.dm.op.logger.Println(m.String())
+		// var m strings.Builder
+		// fmt.Fprintf(&m, "all=%v, ", allCount)
+		// fmt.Fprintf(&m, "add=%v, ", memCount+diskCount+netCount+nospaceCount)
+		// fmt.Fprintf(&m, "mem=%v, ", memCount)
+		// fmt.Fprintf(&m, "disk=%v, ", diskCount)
+		// fmt.Fprintf(&m, "net=%v, ", netCount)
+		// fmt.Fprintf(&m, "nospace=%v, ", nospaceCount)
+		// fmt.Fprintf(&m, "nodes=%v, ", w.dm.nodes)
+		// fmt.Fprintf(&m, "dms=%v, ", names)
+		// fmt.Fprintf(&m, "tmem=%v, ", tmem)
+		// fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
+		// fmt.Fprintf(&m, "tnet=%v", tnet)
+		// w.dm.op.logger.Println(m.String())
 
 		// nodes := []uint64{}
 		// for k := range w.dm.meta {
@@ -257,7 +272,11 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 	return dm.writer, nil
 }
 
-type readerT struct{ dm *DistMem }
+type readerT struct {
+	sync.Mutex
+	dm  *DistMem
+	err error
+}
 
 func (r *readerT) Read(out chan []byte) {
 	go func() {
@@ -272,7 +291,9 @@ func (r *readerT) Read(out chan []byte) {
 				func() {
 					r.dm.meta[node].reader, err = r.dm.meta[node].client.DMemRead(ctx)
 					if err != nil {
-						r.dm.op.logger.Println("DMemRead failed:", err)
+						r.Lock()
+						r.err = fmt.Errorf("DMemRead failed: %v", err)
+						r.Unlock()
 						return
 					}
 				}()
@@ -286,7 +307,10 @@ func (r *readerT) Read(out chan []byte) {
 				})
 
 				if err != nil {
-					r.dm.op.logger.Println("Send failed:", err)
+					r.Lock()
+					r.err = fmt.Errorf("Send failed: %v", err)
+					r.Unlock()
+					continue
 				}
 
 				var n int
@@ -297,6 +321,9 @@ func (r *readerT) Read(out chan []byte) {
 					}
 
 					if err != nil {
+						r.Lock()
+						r.err = fmt.Errorf("Recv failed: %v", err)
+						r.Unlock()
 						break
 					}
 
@@ -305,7 +332,6 @@ func (r *readerT) Read(out chan []byte) {
 				}
 
 				tnet += time.Since(s)
-				slog.Info("from_svc:", "node", node, "n", n)
 			default:
 				func() {
 					s := time.Now()
@@ -321,7 +347,9 @@ func (r *readerT) Read(out chan []byte) {
 						s := time.Now()
 						ra, err := mmap.Open(r.dm.localFile())
 						if err != nil {
-							r.dm.op.logger.Println("Open failed:", err)
+							r.Lock()
+							r.err = fmt.Errorf("Open failed: %v", err)
+							r.Unlock()
 							return
 						}
 
@@ -331,7 +359,9 @@ func (r *readerT) Read(out chan []byte) {
 							b := make([]byte, n)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
-								r.dm.op.logger.Println("ReadAt failed:", err)
+								r.Lock()
+								r.err = fmt.Errorf("ReadAt %v failed: %v", off, err)
+								r.Unlock()
 							}
 
 							out <- b
@@ -344,17 +374,23 @@ func (r *readerT) Read(out chan []byte) {
 			}
 		}
 
-		for k, v := range r.dm.data {
-			r.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
-		}
+		// for k, v := range r.dm.data {
+		// 	r.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
+		// }
 
-		var m strings.Builder
-		fmt.Fprintf(&m, "locs=%v, ", len(r.dm.locs))
-		fmt.Fprintf(&m, "tmem=%v, ", tmem)
-		fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
-		fmt.Fprintf(&m, "tnet=%v", tnet)
-		r.dm.op.logger.Println(m.String())
+		// var m strings.Builder
+		// fmt.Fprintf(&m, "locs=%v, ", len(r.dm.locs))
+		// fmt.Fprintf(&m, "tmem=%v, ", tmem)
+		// fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
+		// fmt.Fprintf(&m, "tnet=%v", tnet)
+		// r.dm.op.logger.Println(m.String())
 	}()
+}
+
+func (r *readerT) Err() error {
+	r.Lock()
+	defer r.Unlock()
+	return r.err
 }
 
 func (dm *DistMem) Reader() (*readerT, error) { return &readerT{dm: dm}, nil }

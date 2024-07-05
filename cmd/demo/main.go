@@ -327,7 +327,7 @@ func main() {
 				writer.Write([]byte(data))
 			}
 
-			slog.Info("write_dm:", "accumSize", n)
+			slog.Info("write_dm:", "accumSize", n, "write_err", writer.Err())
 			return dm
 		}()
 
@@ -367,6 +367,7 @@ func main() {
 
 			reader.Read(out)
 			eg.Wait()
+			slog.Info("read_dm:", "read_err", reader.Err())
 		}()
 
 		dm.Clear()
