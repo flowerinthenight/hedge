@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -169,7 +170,10 @@ func (w *writerT) start() {
 					// Use local disk.
 					if file == nil {
 						flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-						file, _ = os.OpenFile(w.dm.localFile(), flag, 0644)
+						file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
+						if err != nil {
+							slog.Error("OpenFile failed:", "err", err)
+						}
 					}
 
 					n, err := file.Write(data)
@@ -180,6 +184,10 @@ func (w *writerT) start() {
 					} else {
 						w.dm.locs = append(w.dm.locs, n)
 						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
+					}
+
+					if len(data) != n {
+						slog.Error("Write failed:", "in", len(data), "written", n)
 					}
 				}
 			}
@@ -308,6 +316,7 @@ func (r *readerT) Read(out chan []byte) {
 							b := make([]byte, n)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
+								slog.Error("ReadAt failed:", "off", off, "n", n, "err", err)
 								r.Lock()
 								r.err = fmt.Errorf("ReadAt %v failed: %v", off, err)
 								r.Unlock()
