@@ -14,6 +14,7 @@ import (
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/exp/mmap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -58,11 +59,12 @@ type DistMem struct {
 
 type writerT struct {
 	sync.Mutex
-	lo  bool // local write only
-	dm  *DistMem
-	ch  chan []byte
-	on  int32
-	err error
+	lo   bool // local write only
+	dm   *DistMem
+	ch   chan []byte
+	on   int32
+	err  error
+	done chan struct{}
 }
 
 func (w *writerT) Err() error {
@@ -79,12 +81,14 @@ func (w *writerT) Close() {
 	}
 
 	close(w.ch)
+	<-w.done // wait for start()
 	atomic.StoreInt32(&w.on, 0)
 	w.dm.wmtx.Unlock()
 }
 
 func (w *writerT) start() {
 	go func() {
+		defer func() { w.done <- struct{}{} }()
 		atomic.StoreInt32(&w.on, 1)
 		ctx := context.Background()
 		node := w.dm.nodes[0]
@@ -161,14 +165,10 @@ func (w *writerT) start() {
 				if msize < mlimit {
 					// Use local memory.
 					if _, ok := w.dm.data[node]; !ok {
-						w.dm.Lock()
 						w.dm.data[node] = [][]byte{}
-						w.dm.Unlock()
 					}
 
-					w.dm.Lock()
 					w.dm.data[node] = append(w.dm.data[node], data)
-					w.dm.Unlock()
 					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
 				} else {
 					// Use local disk.
@@ -231,9 +231,10 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 
 	dm.Lock()
 	dm.writer = &writerT{
-		lo: localOnly,
-		dm: dm,
-		ch: make(chan []byte),
+		lo:   localOnly,
+		dm:   dm,
+		ch:   make(chan []byte),
+		done: make(chan struct{}, 1),
 	}
 
 	dm.Unlock()
@@ -248,7 +249,8 @@ type readerT struct {
 }
 
 func (r *readerT) Read(out chan []byte) {
-	go func() {
+	eg := new(errgroup.Group)
+	eg.Go(func() error {
 		defer close(out)
 		ctx := context.Background()
 		for _, node := range r.dm.nodes {
@@ -299,8 +301,6 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
-					r.dm.Lock()
-					defer r.dm.Unlock()
 					for _, d := range r.dm.data[node] {
 						out <- d
 					}
@@ -335,7 +335,11 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			}
 		}
-	}()
+
+		return nil
+	})
+
+	eg.Wait()
 }
 
 func (r *readerT) Err() error {
@@ -347,6 +351,8 @@ func (r *readerT) Err() error {
 func (dm *DistMem) Reader() (*readerT, error) { return &readerT{dm: dm}, nil }
 
 func (dm *DistMem) Clear() {
+	dm.Lock()
+	defer dm.Unlock()
 	nodes := []uint64{}
 	for k := range dm.meta {
 		nodes = append(nodes, k)
@@ -365,6 +371,8 @@ func (dm *DistMem) Clear() {
 	dm.meta = make(map[uint64]*metaT)
 	dm.data = map[uint64][][]byte{}
 	dm.locs = []int{}
+	dm.nodes = []uint64{dm.me()} // 0 = local
+	dm.meta[dm.me()] = &metaT{}  // init local
 	os.Remove(dm.localFile())
 }
 
