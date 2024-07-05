@@ -382,6 +382,9 @@ func (dm *DistMem) Clear() {
 	os.Remove(dm.localFile())
 }
 
+// DBG only, to be removed.
+func (dm *DistMem) MemSize() int { return len(dm.data[dm.me()].data) }
+
 func (dm *DistMem) nextNode() (string, uint64) {
 	var mb string
 	members := dm.op.Members()
