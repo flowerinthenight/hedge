@@ -161,10 +161,14 @@ func (w *writerT) start() {
 				if msize < mlimit {
 					// Use local memory.
 					if _, ok := w.dm.data[node]; !ok {
+						w.dm.Lock()
 						w.dm.data[node] = [][]byte{}
+						w.dm.Unlock()
 					}
 
+					w.dm.Lock()
 					w.dm.data[node] = append(w.dm.data[node], data)
+					w.dm.Unlock()
 					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
 				} else {
 					// Use local disk.
@@ -295,6 +299,8 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
+					r.dm.Lock()
+					defer r.dm.Unlock()
 					for _, d := range r.dm.data[node] {
 						out <- d
 					}
