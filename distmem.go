@@ -367,12 +367,12 @@ func (dm *DistMem) Clear() {
 		}
 	}
 
-	dm.nodes = []uint64{}
-	dm.meta = make(map[uint64]*metaT)
-	dm.data = map[uint64][][]byte{}
-	dm.locs = []int{}
-	dm.nodes = []uint64{dm.me()} // 0 = local
-	dm.meta[dm.me()] = &metaT{}  // init local
+	// dm.nodes = []uint64{}
+	// dm.meta = make(map[uint64]*metaT)
+	// dm.data = map[uint64][][]byte{}
+	// dm.locs = []int{}
+	// dm.nodes = []uint64{dm.me()} // 0 = local
+	// dm.meta[dm.me()] = &metaT{}  // init local
 	os.Remove(dm.localFile())
 }
 
