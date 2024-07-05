@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/exp/mmap"
@@ -87,17 +86,10 @@ func (w *writerT) start() {
 	go func() {
 		atomic.StoreInt32(&w.on, 1)
 		ctx := context.Background()
-		var tmem, tdisk, tnet time.Duration
-		var allCount int
-		var memCount int
-		var diskCount int
-		var netCount int
-		var nospaceCount int
 		node := w.dm.nodes[0]
 		var file *os.File
 
 		for data := range w.ch {
-			allCount++
 			var err error
 			var nextName string
 			msize := atomic.LoadUint64(&w.dm.meta[node].msize)
@@ -109,7 +101,6 @@ func (w *writerT) start() {
 			if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
 				nextName, node = w.dm.nextNode()
 				if nextName == "" {
-					nospaceCount++
 					w.Lock()
 					w.err = fmt.Errorf("cannot find next node")
 					w.Unlock()
@@ -149,8 +140,6 @@ func (w *writerT) start() {
 
 			switch {
 			case !w.lo && node != w.dm.me():
-				netCount++
-				s := time.Now()
 				err := w.dm.meta[node].writer.Send(&pb.Payload{
 					Meta: map[string]string{
 						metaName:      w.dm.Name,
@@ -167,23 +156,17 @@ func (w *writerT) start() {
 				}
 
 				atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
-				tnet += time.Since(s)
 			default:
 				if msize < mlimit {
 					// Use local memory.
-					memCount++
-					s := time.Now()
 					if _, ok := w.dm.data[node]; !ok {
 						w.dm.data[node] = [][]byte{}
 					}
 
 					w.dm.data[node] = append(w.dm.data[node], data)
 					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
-					tmem += time.Since(s)
 				} else {
 					// Use local disk.
-					diskCount++
-					s := time.Now()
 					if file == nil {
 						flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 						file, _ = os.OpenFile(w.dm.localFile(), flag, 0644)
@@ -198,38 +181,12 @@ func (w *writerT) start() {
 						w.dm.locs = append(w.dm.locs, n)
 						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
 					}
-
-					tdisk += time.Since(s)
 				}
 			}
 		}
 
-		// for k, v := range w.dm.data {
-		// 	w.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
-		// }
-
 		file.Sync()
 		file.Close()
-		// w.dm.op.logger.Printf("locs=%v", len(w.dm.locs))
-
-		// names := []string{}
-		// for k := range w.dm.op.dms {
-		// 	names = append(names, k)
-		// }
-
-		// var m strings.Builder
-		// fmt.Fprintf(&m, "all=%v, ", allCount)
-		// fmt.Fprintf(&m, "add=%v, ", memCount+diskCount+netCount+nospaceCount)
-		// fmt.Fprintf(&m, "mem=%v, ", memCount)
-		// fmt.Fprintf(&m, "disk=%v, ", diskCount)
-		// fmt.Fprintf(&m, "net=%v, ", netCount)
-		// fmt.Fprintf(&m, "nospace=%v, ", nospaceCount)
-		// fmt.Fprintf(&m, "nodes=%v, ", w.dm.nodes)
-		// fmt.Fprintf(&m, "dms=%v, ", names)
-		// fmt.Fprintf(&m, "tmem=%v, ", tmem)
-		// fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
-		// fmt.Fprintf(&m, "tnet=%v", tnet)
-		// w.dm.op.logger.Println(m.String())
 
 		// nodes := []uint64{}
 		// for k := range w.dm.meta {
@@ -282,12 +239,10 @@ func (r *readerT) Read(out chan []byte) {
 	go func() {
 		defer close(out)
 		ctx := context.Background()
-		var tmem, tdisk, tnet time.Duration
 		for _, node := range r.dm.nodes {
 			var err error
 			switch {
 			case node != r.dm.me():
-				s := time.Now()
 				func() {
 					r.dm.meta[node].reader, err = r.dm.meta[node].client.DMemRead(ctx)
 					if err != nil {
@@ -330,21 +285,15 @@ func (r *readerT) Read(out chan []byte) {
 					out <- in.Data
 					n++
 				}
-
-				tnet += time.Since(s)
 			default:
 				func() {
-					s := time.Now()
 					for _, d := range r.dm.data[node] {
 						out <- d
 					}
-
-					tmem += time.Since(s)
 				}()
 
 				if len(r.dm.locs) > 0 {
 					func() {
-						s := time.Now()
 						ra, err := mmap.Open(r.dm.localFile())
 						if err != nil {
 							r.Lock()
@@ -367,23 +316,10 @@ func (r *readerT) Read(out chan []byte) {
 							out <- b
 							off = off + int64(n)
 						}
-
-						tdisk += time.Since(s)
 					}()
 				}
 			}
 		}
-
-		// for k, v := range r.dm.data {
-		// 	r.dm.op.logger.Printf("node=%v, sliceLen=%v", k, len(v))
-		// }
-
-		// var m strings.Builder
-		// fmt.Fprintf(&m, "locs=%v, ", len(r.dm.locs))
-		// fmt.Fprintf(&m, "tmem=%v, ", tmem)
-		// fmt.Fprintf(&m, "tdisk=%v, ", tdisk)
-		// fmt.Fprintf(&m, "tnet=%v", tnet)
-		// r.dm.op.logger.Println(m.String())
 	}()
 }
 
