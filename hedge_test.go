@@ -1,7 +1,6 @@
 package hedge
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"testing"
@@ -18,10 +17,14 @@ const (
 func TestAny(t *testing.T) {
 	// TODO:
 	d := []byte{}
-	buf := bytes.NewBuffer(d)
-	buf.Write([]byte("hello"))
-	buf.Write([]byte("world"))
-	slog.Info("buf:", "len", buf.Len())
+	d = append(d, []byte("hello")...)
+	d = append(d, []byte("world")...)
+	d = append(d, []byte("stats")...)
+	d = append(d, []byte("one")...)
+	slog.Info("next:", "val", d[0:5])
+	slog.Info("next:", "val", d[5:10])
+	slog.Info("next:", "val", d[10:15])
+	slog.Info("next:", "val", d[15:20])
 }
 
 func TestBasic(t *testing.T) {

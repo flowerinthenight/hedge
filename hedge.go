@@ -557,7 +557,7 @@ type Limit struct {
 
 func (op *Op) NewDistMem(name string, limit Limit) *DistMem {
 	if _, ok := op.dms[name]; ok {
-		return op.dms[name]
+		delete(op.dms, name)
 	}
 
 	op.dms[name] = newDistMem(

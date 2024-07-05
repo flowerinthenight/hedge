@@ -1,7 +1,6 @@
 package hedge
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -42,7 +41,6 @@ type DistMemOptions struct {
 }
 
 type memT struct {
-	buf   *bytes.Buffer
 	data  []byte
 	mlocs []int
 }
@@ -179,13 +177,9 @@ func (w *writerT) start() {
 						}
 					}
 
-					if w.dm.data[node].buf == nil {
-						w.dm.data[node].buf = bytes.NewBuffer(w.dm.data[node].data)
-					}
-
-					n, _ := w.dm.data[node].buf.Write(data)
-					w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, n)
-					atomic.AddUint64(&w.dm.meta[node].msize, uint64(n))
+					w.dm.data[node].data = append(w.dm.data[node].data, data...)
+					w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, len(data))
+					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
 				} else {
 					// Use local disk.
 					if file == nil {
@@ -311,8 +305,10 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
+					var i int
 					for _, off := range r.dm.data[node].mlocs {
-						out <- r.dm.data[node].buf.Next(off)
+						out <- r.dm.data[node].data[i : i+off]
+						i += off
 					}
 				}()
 
