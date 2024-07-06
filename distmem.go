@@ -50,7 +50,6 @@ type memT struct {
 // DistMem represents an object for distributed memory read/writes.
 type DistMem struct {
 	sync.Mutex
-
 	Name string
 
 	op     *Op
