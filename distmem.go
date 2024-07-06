@@ -93,142 +93,160 @@ func (w *writerT) Close() {
 }
 
 func (w *writerT) start() {
-	go func() {
-		defer func() { w.done <- struct{}{} }()
-		atomic.StoreInt32(&w.on, 1)
-		ctx := context.Background()
-		node := w.dm.nodes[0]
-		var file *os.File
+	defer func() { w.done <- struct{}{} }()
+	atomic.StoreInt32(&w.on, 1)
+	ctx := context.Background()
+	node := w.dm.nodes[0]
+	var file *os.File
 
-		for data := range w.ch {
-			var err error
-			var nextName string
-			msize := atomic.LoadUint64(&w.dm.meta[node].msize)
-			mlimit := atomic.LoadUint64(&w.dm.mlimit)
-			dsize := atomic.LoadUint64(&w.dm.meta[node].dsize)
-			dlimit := atomic.LoadUint64(&w.dm.dlimit)
+	var allCount int
+	var memCount int
+	var diskCount int
+	var netCount int
+	var failCount int
 
-			// Local (or next hop) is full. Go to the next node.
-			if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
-				nextName, node = w.dm.nextNode()
-				if nextName == "" {
-					w.Lock()
-					w.err = fmt.Errorf("cannot find next node")
-					w.Unlock()
-					continue
-				}
+	for data := range w.ch {
+		allCount++
+		var err error
+		var nextName string
+		msize := atomic.LoadUint64(&w.dm.meta[node].msize)
+		mlimit := atomic.LoadUint64(&w.dm.mlimit)
+		dsize := atomic.LoadUint64(&w.dm.meta[node].dsize)
+		dlimit := atomic.LoadUint64(&w.dm.dlimit)
 
-				if atomic.LoadInt32(&w.dm.meta[node].grpc) == 0 {
-					err = func() error {
-						host, port, _ := net.SplitHostPort(nextName)
-						pi, _ := strconv.Atoi(port)
-						nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
-
-						var opts []grpc.DialOption
-						opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-						w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
-						if err != nil {
-							return fmt.Errorf("NewClient (%v) failed: %w", nextName, err)
-						}
-
-						w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
-						w.dm.meta[node].writer, err = w.dm.meta[node].client.DMemWrite(ctx)
-						if err != nil {
-							return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
-						}
-
-						atomic.AddInt32(&w.dm.meta[node].grpc, 1)
-						return nil
-					}()
-
-					if err != nil {
-						w.Lock()
-						w.err = err
-						w.Unlock()
-					}
-				}
+		// Local (or next hop) is full. Go to the next node.
+		if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
+			nextName, node = w.dm.nextNode()
+			if nextName == "" {
+				failCount++
+				w.Lock()
+				w.err = fmt.Errorf("cannot find next node")
+				w.Unlock()
+				continue
 			}
 
-			switch {
-			case !w.lo && node != w.dm.me():
-				err := w.dm.meta[node].writer.Send(&pb.Payload{
-					Meta: map[string]string{
-						metaName:      w.dm.Name,
-						metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit),
-						metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit),
-					},
-					Data: data,
-				})
+			if atomic.LoadInt32(&w.dm.meta[node].grpc) == 0 {
+				err = func() error {
+					host, port, _ := net.SplitHostPort(nextName)
+					pi, _ := strconv.Atoi(port)
+					nextName = net.JoinHostPort(host, fmt.Sprintf("%v", pi+1))
+
+					var opts []grpc.DialOption
+					opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+					w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
+					if err != nil {
+						return fmt.Errorf("NewClient (%v) failed: %w", nextName, err)
+					}
+
+					w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
+					w.dm.meta[node].writer, err = w.dm.meta[node].client.DMemWrite(ctx)
+					if err != nil {
+						return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
+					}
+
+					atomic.AddInt32(&w.dm.meta[node].grpc, 1)
+					return nil
+				}()
 
 				if err != nil {
 					w.Lock()
-					w.err = fmt.Errorf("Send failed: %w", err)
+					w.err = err
 					w.Unlock()
-				}
-
-				atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
-			default:
-				if msize < mlimit {
-					// Use local memory.
-					if _, ok := w.dm.data[node]; !ok {
-						w.dm.data[node] = &memT{
-							data:  []byte{},
-							mlocs: []int{},
-						}
-					}
-
-					w.dm.data[node].data = append(w.dm.data[node].data, data...)
-					w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, len(data))
-					atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
-				} else {
-					// Use local disk.
-					if file == nil {
-						flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-						file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
-						if err != nil {
-							slog.Error("OpenFile failed:", "err", err)
-						}
-					}
-
-					n, err := file.Write(data)
-					if err != nil {
-						w.Lock()
-						w.err = fmt.Errorf("Write failed: %w", err)
-						w.Unlock()
-					} else {
-						w.dm.dlocs = append(w.dm.dlocs, n)
-						atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
-					}
 				}
 			}
 		}
 
-		file.Sync()
-		file.Close()
+		switch {
+		case !w.lo && node != w.dm.me():
+			netCount++
+			err := w.dm.meta[node].writer.Send(&pb.Payload{
+				Meta: map[string]string{
+					metaName:      w.dm.Name,
+					metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit),
+					metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit),
+				},
+				Data: data,
+			})
 
-		// nodes := []uint64{}
-		// for k := range w.dm.meta {
-		// 	nodes = append(nodes, k)
-		// }
+			if err != nil {
+				w.Lock()
+				w.err = fmt.Errorf("Send failed: %w", err)
+				w.Unlock()
+			}
 
-		// for _, n := range nodes {
-		// 	atomic.StoreInt32(&w.dm.meta[n].grpc, 0)
-		// 	if w.dm.meta[n].writer != nil {
-		// 		w.dm.meta[n].writer.CloseSend()
-		// 	}
+			atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
+		default:
+			if msize < mlimit {
+				// Use local memory.
+				memCount++
+				if _, ok := w.dm.data[node]; !ok {
+					w.dm.data[node] = &memT{
+						data:  []byte{},
+						mlocs: []int{},
+					}
+				}
 
-		// 	if w.dm.meta[n].conn != nil {
-		// 		w.dm.meta[n].conn.Close()
-		// 	}
-		// }
-	}()
+				w.dm.data[node].data = append(w.dm.data[node].data, data...)
+				w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, len(data))
+				atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
+			} else {
+				// Use local disk.
+				diskCount++
+				if file == nil {
+					flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+					file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
+					if err != nil {
+						slog.Error("OpenFile failed:", "err", err)
+					}
+				}
+
+				n, err := file.Write(data)
+				if err != nil {
+					w.Lock()
+					w.err = fmt.Errorf("Write failed: %w", err)
+					w.Unlock()
+				} else {
+					w.dm.dlocs = append(w.dm.dlocs, n)
+					atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
+
+					if n != len(data) {
+						slog.Info("disk:", "me", w.dm.me(), "written", n, "origlen", len(data))
+					}
+				}
+			}
+		}
+	}
+
+	slog.Info(
+		"write:",
+		"all", allCount,
+		"add", memCount+diskCount+netCount+failCount,
+		"mem", memCount,
+		"disk", diskCount,
+		"net", netCount,
+		"fail", failCount,
+		"nodes", w.dm.nodes,
+	)
+
+	file.Sync()
+	file.Close()
+	nodes := []uint64{}
+	for k := range w.dm.meta {
+		nodes = append(nodes, k)
+	}
+
+	for _, n := range nodes {
+		if w.dm.meta[n].writer != nil {
+			w.dm.meta[n].writer.CloseSend()
+		}
+	}
 }
 
-type writerOptionsT struct {
+type writerOptions struct {
 	LocalOnly bool
 }
 
-func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
+func (dm *DistMem) Writer(opts ...*writerOptions) (*writerT, error) {
 	dm.wmtx.Lock()
 	var localOnly bool
 	if len(opts) > 0 {
@@ -242,25 +260,28 @@ func (dm *DistMem) Writer(opts ...*writerOptionsT) (*writerT, error) {
 		done: make(chan struct{}, 1),
 	}
 
-	dm.writer.start()
+	go dm.writer.start()
 	return dm.writer, nil
 }
 
 type readerT struct {
 	sync.Mutex
-	dm  *DistMem
-	err error
+	lo   bool // local read only
+	dm   *DistMem
+	on   int32
+	err  error
+	done chan struct{}
 }
 
 func (r *readerT) Read(out chan []byte) {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
-		defer close(out)
+		atomic.StoreInt32(&r.on, 1)
 		ctx := context.Background()
 		for _, node := range r.dm.nodes {
 			var err error
 			switch {
-			case node != r.dm.me():
+			case !r.lo && node != r.dm.me():
 				func() {
 					r.dm.meta[node].reader, err = r.dm.meta[node].client.DMemRead(ctx)
 					if err != nil {
@@ -305,10 +326,15 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
-					var i int
+					var n, count int
 					for _, off := range r.dm.data[node].mlocs {
-						out <- r.dm.data[node].data[i : i+off]
-						i += off
+						out <- r.dm.data[node].data[n : n+off]
+						n += off
+						count++
+					}
+
+					if r.lo {
+						slog.Info("via_svc:", "me", r.dm.me(), "memCount", count)
 					}
 				}()
 
@@ -324,8 +350,9 @@ func (r *readerT) Read(out chan []byte) {
 
 						defer ra.Close()
 						var off int64
-						for _, n := range r.dm.dlocs {
-							b := make([]byte, n)
+						var count int
+						for _, loc := range r.dm.dlocs {
+							b := make([]byte, loc)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
 								slog.Error("ReadAt failed:", "off", off, "n", n, "err", err)
@@ -334,8 +361,17 @@ func (r *readerT) Read(out chan []byte) {
 								r.Unlock()
 							}
 
+							if n != loc {
+								slog.Info("read_disk_fail:", "me", r.dm.me(), "n", n, "loc", loc)
+							}
+
 							out <- b
-							off = off + int64(n)
+							off = off + int64(off)
+							count++
+						}
+
+						if r.lo {
+							slog.Info("via_svc:", "me", r.dm.me(), "diskCount", count)
 						}
 					}()
 				}
@@ -346,6 +382,8 @@ func (r *readerT) Read(out chan []byte) {
 	})
 
 	eg.Wait()
+	close(out)
+	r.done <- struct{}{}
 }
 
 func (r *readerT) Err() error {
@@ -354,7 +392,27 @@ func (r *readerT) Err() error {
 	return r.err
 }
 
-func (dm *DistMem) Reader() (*readerT, error) { return &readerT{dm: dm}, nil }
+func (r *readerT) Close() {
+	if atomic.LoadInt32(&r.on) == 0 {
+		return
+	}
+
+	<-r.done // wait for loop()
+	atomic.StoreInt32(&r.on, 0)
+}
+
+type readerOptions struct {
+	LocalOnly bool
+}
+
+func (dm *DistMem) Reader(opts ...*readerOptions) (*readerT, error) {
+	var localOnly bool
+	if len(opts) > 0 {
+		localOnly = opts[0].LocalOnly
+	}
+
+	return &readerT{lo: localOnly, dm: dm, done: make(chan struct{}, 1)}, nil
+}
 
 func (dm *DistMem) Clear() {
 	dm.Lock()
@@ -379,11 +437,8 @@ func (dm *DistMem) Clear() {
 	// dm.locs = []int{}
 	// dm.nodes = []uint64{dm.me()} // 0 = local
 	// dm.meta[dm.me()] = &metaT{}  // init local
-	os.Remove(dm.localFile())
+	// os.Remove(dm.localFile())
 }
-
-// DBG only, to be removed.
-func (dm *DistMem) MemSize() int { return len(dm.data[dm.me()].data) }
 
 func (dm *DistMem) nextNode() (string, uint64) {
 	var mb string
@@ -426,8 +481,12 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		wmtx:  &sync.Mutex{},
 	}
 
-	dm.nodes = []uint64{dm.me()} // 0 = local
-	dm.meta[dm.me()] = &metaT{}  // init local
+	dm.nodes = []uint64{dm.me()}
+	dm.meta[dm.me()] = &metaT{}
+	dm.data[dm.me()] = &memT{
+		data:  []byte{},
+		mlocs: []int{},
+	}
 
 	if len(opts) > 0 {
 		dm.mlimit = opts[0].MemLimit

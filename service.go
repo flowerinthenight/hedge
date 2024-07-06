@@ -3,6 +3,7 @@ package hedge
 import (
 	"context"
 	"io"
+	"log/slog"
 	"strconv"
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
@@ -140,7 +141,7 @@ loop:
 		})
 
 		if writer == nil {
-			writer, _ = s.op.dms[name].Writer(&writerOptionsT{
+			writer, _ = s.op.dms[name].Writer(&writerOptions{
 				LocalOnly: true,
 			})
 		}
@@ -175,12 +176,15 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 		DiskLimit: dlimit,
 	})
 
-	reader, _ := s.op.dms[name].Reader()
+	reader, _ := s.op.dms[name].Reader(&readerOptions{LocalOnly: true})
 	out := make(chan []byte)
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
 		for d := range out {
-			hs.Send(&pb.Payload{Data: d})
+			err = hs.Send(&pb.Payload{Data: d})
+			if err != nil {
+				slog.Error("Send failed:", "err", err)
+			}
 		}
 
 		return nil

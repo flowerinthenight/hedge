@@ -219,7 +219,8 @@ type Op struct {
 	broadcastStreamIn  chan *StreamMessage
 	broadcastStreamOut chan *StreamMessage
 
-	dms map[string]*DistMem // distributed memory
+	dmsLock *sync.Mutex
+	dms     map[string]*DistMem // distributed memory
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
@@ -556,8 +557,10 @@ type Limit struct {
 }
 
 func (op *Op) NewDistMem(name string, limit Limit) *DistMem {
+	op.dmsLock.Lock()
+	defer op.dmsLock.Unlock()
 	if _, ok := op.dms[name]; ok {
-		delete(op.dms, name)
+		return op.dms[name]
 	}
 
 	op.dms[name] = newDistMem(
@@ -1326,6 +1329,7 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		members:       make(map[string]struct{}),
 		ensureCh:      make(chan string),
 		ensureDone:    make(chan struct{}, 1),
+		dmsLock:       &sync.Mutex{},
 		dms:           map[string]*DistMem{},
 		Lock:          &spindle.Lock{}, // init later
 	}

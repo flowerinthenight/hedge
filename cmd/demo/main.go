@@ -305,8 +305,8 @@ func main() {
 		}
 
 		slog.Info("start distmem:", "name", name)
-		// limit := 14_000 // 4 pods, all
-		limit := 2_500
+		limit := 14_000 // 4 pods, all
+		// limit := 2_500
 
 		dm := func() *hedge.DistMem {
 			dm := op.NewDistMem(name, hedge.Limit{
@@ -368,6 +368,7 @@ func main() {
 
 			reader.Read(out)
 			eg.Wait()
+			reader.Close()
 			slog.Info("read_dm:", "read_err", reader.Err())
 		}()
 
