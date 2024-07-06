@@ -519,10 +519,26 @@ func (dm *DistMem) cleaner() {
 			}
 
 			if time.Since(started) > dm.age {
+				slog.Info("cleanup:", "name", dm.Name)
+
+				func() {
+					// Cleanup memory area:
+					dm.op.dms[dm.Name].mlock.Lock()
+					dm.op.dms[dm.Name].mlock.Unlock()
+					for _, node := range dm.op.dms[dm.Name].nodes {
+						dm.op.dms[dm.Name].data[node].data = []byte{}
+					}
+				}()
+
+				// Cleanup disk area:
+				dm.op.dms[dm.Name].dlock.Lock()
+				os.Remove(dm.localFile())
+				dm.op.dms[dm.Name].dlock.Unlock()
+
+				// Remove the main map entry:
 				dm.op.dmsLock.Lock()
 				delete(dm.op.dms, dm.Name)
 				dm.op.dmsLock.Unlock()
-				os.Remove(dm.localFile())
 				break
 			}
 		}
