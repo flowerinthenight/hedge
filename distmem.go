@@ -519,8 +519,6 @@ func (dm *DistMem) cleaner() {
 			}
 
 			if time.Since(started) > dm.age {
-				slog.Info("cleanup:", "name", dm.Name)
-
 				func() {
 					// Cleanup memory area:
 					dm.op.dms[dm.Name].mlock.Lock()
