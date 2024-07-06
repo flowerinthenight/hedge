@@ -63,7 +63,7 @@ type DistMem struct {
 	data   map[uint64]*memT  // mem data
 	mlocs  []int             // mem offsets
 	dlocs  []int             // disk offsets
-	mlock  *sync.Mutex       // local file lock
+	mlock  *sync.Mutex       // local mem lock
 	dlock  *sync.Mutex       // local file lock
 	wmtx   *sync.Mutex       // one active writer only
 	writer *writer           // writer object
