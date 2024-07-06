@@ -48,6 +48,7 @@ type memT struct {
 	mlocs []int
 }
 
+// DistMem represents an object for distributed memory read/writes.
 type DistMem struct {
 	sync.Mutex
 
@@ -65,7 +66,7 @@ type DistMem struct {
 	mlock  *sync.Mutex       // local file lock
 	dlock  *sync.Mutex       // local file lock
 	wmtx   *sync.Mutex       // one active writer only
-	writer *writerT          // writer object
+	writer *writer           // writer object
 	wrefs  int64             // writer reference count
 	rrefs  int64             // reader reference count
 	on     int32
@@ -74,7 +75,7 @@ type DistMem struct {
 	start time.Time
 }
 
-type writerT struct {
+type writer struct {
 	sync.Mutex
 	lo   bool // local write only
 	dm   *DistMem
@@ -84,15 +85,18 @@ type writerT struct {
 	done chan struct{}
 }
 
-func (w *writerT) Err() error {
+// Err returns the last recorded error during the write operation.
+func (w *writer) Err() error {
 	w.Lock()
 	defer w.Unlock()
 	return w.err
 }
 
-func (w *writerT) Write(data []byte) { w.ch <- data }
+// Write writes data to the underlying storage.
+func (w *writer) Write(data []byte) { w.ch <- data }
 
-func (w *writerT) Close() {
+// Close closes the writer object.
+func (w *writer) Close() {
 	if atomic.LoadInt32(&w.on) == 0 {
 		return
 	}
@@ -104,7 +108,7 @@ func (w *writerT) Close() {
 	w.dm.wmtx.Unlock()
 }
 
-func (w *writerT) start() {
+func (w *writer) start() {
 	defer func() { w.done <- struct{}{} }()
 	atomic.StoreInt32(&w.on, 1)
 	ctx := context.Background()
@@ -280,14 +284,16 @@ type writerOptions struct {
 	LocalOnly bool
 }
 
-func (dm *DistMem) Writer(opts ...*writerOptions) (*writerT, error) {
+// Writer returns a writer object for writing data to DistMem. The
+// caller needs to call writer.Close() after use.
+func (dm *DistMem) Writer(opts ...*writerOptions) (*writer, error) {
 	dm.wmtx.Lock()
 	var localOnly bool
 	if len(opts) > 0 {
 		localOnly = opts[0].LocalOnly
 	}
 
-	dm.writer = &writerT{
+	dm.writer = &writer{
 		lo:   localOnly,
 		dm:   dm,
 		ch:   make(chan []byte),
@@ -299,7 +305,7 @@ func (dm *DistMem) Writer(opts ...*writerOptions) (*writerT, error) {
 	return dm.writer, nil
 }
 
-type readerT struct {
+type reader struct {
 	sync.Mutex
 	lo   bool // local read only
 	dm   *DistMem
@@ -308,7 +314,8 @@ type readerT struct {
 	done chan struct{}
 }
 
-func (r *readerT) Read(out chan []byte) {
+// Read reads the underlying data and streams them to the `out` channel.
+func (r *reader) Read(out chan []byte) {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
 		atomic.StoreInt32(&r.on, 1)
@@ -414,13 +421,15 @@ func (r *readerT) Read(out chan []byte) {
 	r.done <- struct{}{}
 }
 
-func (r *readerT) Err() error {
+// Err returns the last recorded error, if any, during the read operation.
+func (r *reader) Err() error {
 	r.Lock()
 	defer r.Unlock()
 	return r.err
 }
 
-func (r *readerT) Close() {
+// Close closes the reader object.
+func (r *reader) Close() {
 	if atomic.LoadInt32(&r.on) == 0 {
 		return
 	}
@@ -434,13 +443,15 @@ type readerOptions struct {
 	LocalOnly bool
 }
 
-func (dm *DistMem) Reader(opts ...*readerOptions) (*readerT, error) {
+// Reader returns a reader object for reading data from DistMem.
+// The caller needs to call reader.Close() after use.
+func (dm *DistMem) Reader(opts ...*readerOptions) (*reader, error) {
 	var localOnly bool
 	if len(opts) > 0 {
 		localOnly = opts[0].LocalOnly
 	}
 
-	reader := &readerT{
+	reader := &reader{
 		lo:   localOnly,
 		dm:   dm,
 		done: make(chan struct{}, 1),
@@ -450,6 +461,7 @@ func (dm *DistMem) Reader(opts ...*readerOptions) (*readerT, error) {
 	return reader, nil
 }
 
+// Close closes the DistMem object.
 func (dm *DistMem) Close() {
 	if atomic.LoadInt32(&dm.on) == 0 {
 		return

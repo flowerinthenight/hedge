@@ -551,6 +551,9 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 	return &Semaphore{name, limit, op}, nil
 }
 
+// NewDistMem returns an object for writing data to distributed memory and
+// disk across the cluster. The order of writing is local memory, local
+// disk, other pod's memory, other pod's disk, etc.
 func (op *Op) NewDistMem(name string, opts ...*DistMemOptions) *DistMem {
 	op.dmsLock.Lock()
 	defer op.dmsLock.Unlock()
@@ -637,14 +640,16 @@ type PutOptions struct {
 	// If true, do a direct write, no need to fwd to leader.
 	DirectWrite bool
 
-	// If true, don't do an append-write; overwrite the latest. Note that even if you set this
-	// to true, if you do another Put the next time with this field set as false (default),
-	// the previous write will now be gone, or will now be part of the history.
+	// If true, don't do an append-write; overwrite the latest. Note that even
+	// if you set this to true, if you do another Put the next time with this
+	// field set as false (default), the previous write will now be gone, or
+	// will now be part of the history.
 	NoAppend bool
 }
 
-// Put saves a key/value to Op. This call will try to block, at least roughly until spindle's
-// timeout, to wait for the leader's availability to do actual writes before returning.
+// Put saves a key/value to Op. This call will try to block, at least roughly
+// until spindle's timeout, to wait for the leader's availability to do actual
+// writes before returning.
 func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 	if op.logTable == "" {
 		return ErrNotSupported
@@ -939,7 +944,7 @@ type StreamBroadcastOutput struct {
 	Outs map[string]chan *StreamMessage
 }
 
-// StreamToLeader returns input and output channels for doing streaming broadcasts. Any node can broadcast messages,
+// StreamBroadcast returns input and output channels for doing streaming broadcasts. Any node can broadcast messages,
 // including the leader itself. Note that this is best-effort basis only; by the time you call this API, the handler
 // might not have all the active members in record yet, as is the usual situation with k8s deployments, where pods
 // come and go, and our internal heartbeat protocol hasn't been completed yet. This call will also block until it
