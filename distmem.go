@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/exp/mmap"
@@ -23,6 +24,7 @@ const (
 	metaName      = "name"
 	metaMemLimit  = "mlimit"
 	metaDiskLimit = "dlimit"
+	metaExpire    = "expire"
 )
 
 type metaT struct {
@@ -36,8 +38,9 @@ type metaT struct {
 }
 
 type DistMemOptions struct {
-	MemLimit  uint64 // mem limit (bytes) before spill-over
-	DiskLimit uint64 // disk limit (bytes) before spill-over
+	MemLimit   uint64 // mem limit (bytes) before spill-over
+	DiskLimit  uint64 // disk limit (bytes) before spill-over
+	Expiration int64  // expiration in seconds, default 1hr
 }
 
 type memT struct {
@@ -59,8 +62,16 @@ type DistMem struct {
 	data   map[uint64]*memT  // mem data
 	mlocs  []int             // mem offsets
 	dlocs  []int             // disk offsets
+	mlock  *sync.Mutex       // local file lock
+	dlock  *sync.Mutex       // local file lock
 	wmtx   *sync.Mutex       // one active writer only
 	writer *writerT          // writer object
+	wrefs  int64             // writer reference count
+	rrefs  int64             // reader reference count
+	on     int32
+
+	age   time.Duration
+	start time.Time
 }
 
 type writerT struct {
@@ -89,6 +100,7 @@ func (w *writerT) Close() {
 	close(w.ch)
 	<-w.done // wait for start()
 	atomic.StoreInt32(&w.on, 0)
+	atomic.AddInt64(&w.dm.wrefs, -1)
 	w.dm.wmtx.Unlock()
 }
 
@@ -104,6 +116,9 @@ func (w *writerT) start() {
 	var diskCount int
 	var netCount int
 	var failCount int
+
+	var mlock bool
+	var dlock bool
 
 	for data := range w.ch {
 		allCount++
@@ -164,6 +179,7 @@ func (w *writerT) start() {
 					metaName:      w.dm.Name,
 					metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit),
 					metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit),
+					metaExpire:    fmt.Sprintf("%v", int64(w.dm.age.Seconds())),
 				},
 				Data: data,
 			})
@@ -179,6 +195,11 @@ func (w *writerT) start() {
 			if msize < mlimit {
 				// Use local memory.
 				memCount++
+				if !mlock {
+					w.dm.mlock.Lock()
+					mlock = true
+				}
+
 				if _, ok := w.dm.data[node]; !ok {
 					w.dm.data[node] = &memT{
 						data:  []byte{},
@@ -192,6 +213,11 @@ func (w *writerT) start() {
 			} else {
 				// Use local disk.
 				diskCount++
+				if !dlock {
+					w.dm.dlock.Lock()
+					dlock = true
+				}
+
 				if file == nil {
 					flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 					file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
@@ -217,19 +243,27 @@ func (w *writerT) start() {
 		}
 	}
 
-	slog.Info(
-		"write:",
-		"all", allCount,
-		"add", memCount+diskCount+netCount+failCount,
-		"mem", memCount,
-		"disk", diskCount,
-		"net", netCount,
-		"fail", failCount,
-		"nodes", w.dm.nodes,
-	)
+	// slog.Info(
+	// 	"write:",
+	// 	"all", allCount,
+	// 	"add", memCount+diskCount+netCount+failCount,
+	// 	"mem", memCount,
+	// 	"disk", diskCount,
+	// 	"net", netCount,
+	// 	"fail", failCount,
+	// 	"nodes", w.dm.nodes,
+	// )
+
+	if mlock {
+		w.dm.mlock.Unlock()
+	}
 
 	file.Sync()
 	file.Close()
+	if dlock {
+		w.dm.dlock.Unlock()
+	}
+
 	nodes := []uint64{}
 	for k := range w.dm.meta {
 		nodes = append(nodes, k)
@@ -261,6 +295,7 @@ func (dm *DistMem) Writer(opts ...*writerOptions) (*writerT, error) {
 	}
 
 	go dm.writer.start()
+	atomic.AddInt64(&dm.wrefs, 1)
 	return dm.writer, nil
 }
 
@@ -297,6 +332,7 @@ func (r *readerT) Read(out chan []byte) {
 						metaName:      r.dm.Name,
 						metaMemLimit:  fmt.Sprintf("%v", r.dm.mlimit),
 						metaDiskLimit: fmt.Sprintf("%v", r.dm.dlimit),
+						metaExpire:    fmt.Sprintf("%v", int64(r.dm.age.Seconds())),
 					},
 				})
 
@@ -326,20 +362,20 @@ func (r *readerT) Read(out chan []byte) {
 				}
 			default:
 				func() {
+					r.dm.mlock.Lock()
+					defer r.dm.mlock.Unlock()
 					var n, count int
 					for _, off := range r.dm.data[node].mlocs {
 						out <- r.dm.data[node].data[n : n+off]
 						n += off
 						count++
 					}
-
-					if r.lo {
-						slog.Info("via_svc:", "me", r.dm.me(), "memCount", count)
-					}
 				}()
 
 				if len(r.dm.dlocs) > 0 {
 					func() {
+						r.dm.dlock.Lock()
+						defer r.dm.dlock.Unlock()
 						ra, err := mmap.Open(r.dm.localFile())
 						if err != nil {
 							r.Lock()
@@ -355,23 +391,15 @@ func (r *readerT) Read(out chan []byte) {
 							b := make([]byte, loc)
 							n, err := ra.ReadAt(b, off)
 							if err != nil {
-								slog.Error("ReadAt failed:", "off", off, "n", n, "err", err)
 								r.Lock()
-								r.err = fmt.Errorf("ReadAt %v failed: %v", off, err)
+								r.err = fmt.Errorf("ReadAt failed: %v", err)
 								r.Unlock()
 							}
 
-							if n != loc {
-								slog.Info("read_disk_fail:", "me", r.dm.me(), "n", n, "loc", loc)
-							}
-
+							_ = n
 							out <- b
 							off = off + int64(off)
 							count++
-						}
-
-						if r.lo {
-							slog.Info("via_svc:", "me", r.dm.me(), "diskCount", count)
 						}
 					}()
 				}
@@ -398,6 +426,7 @@ func (r *readerT) Close() {
 	}
 
 	<-r.done // wait for loop()
+	atomic.AddInt64(&r.dm.rrefs, -1)
 	atomic.StoreInt32(&r.on, 0)
 }
 
@@ -411,10 +440,21 @@ func (dm *DistMem) Reader(opts ...*readerOptions) (*readerT, error) {
 		localOnly = opts[0].LocalOnly
 	}
 
-	return &readerT{lo: localOnly, dm: dm, done: make(chan struct{}, 1)}, nil
+	reader := &readerT{
+		lo:   localOnly,
+		dm:   dm,
+		done: make(chan struct{}, 1),
+	}
+
+	atomic.AddInt64(&dm.rrefs, 1)
+	return reader, nil
 }
 
-func (dm *DistMem) Clear() {
+func (dm *DistMem) Close() {
+	if atomic.LoadInt32(&dm.on) == 0 {
+		return
+	}
+
 	dm.Lock()
 	defer dm.Unlock()
 	nodes := []uint64{}
@@ -425,19 +465,13 @@ func (dm *DistMem) Clear() {
 	ctx := context.Background()
 	for _, n := range nodes {
 		if dm.meta[n].conn != nil {
-			dm.meta[n].client.DMemClear(ctx, &pb.Payload{
+			dm.meta[n].client.DMemClose(ctx, &pb.Payload{
 				Meta: map[string]string{metaName: dm.Name},
 			})
 		}
 	}
 
-	// dm.nodes = []uint64{}
-	// dm.meta = make(map[uint64]*metaT)
-	// dm.data = map[uint64][][]byte{}
-	// dm.locs = []int{}
-	// dm.nodes = []uint64{dm.me()} // 0 = local
-	// dm.meta[dm.me()] = &metaT{}  // init local
-	// os.Remove(dm.localFile())
+	atomic.StoreInt32(&dm.on, 0)
 }
 
 func (dm *DistMem) nextNode() (string, uint64) {
@@ -471,6 +505,34 @@ func (dm *DistMem) localFile() string {
 	return fmt.Sprintf("%v_%v.dat", name1, name2)
 }
 
+func (dm *DistMem) cleaner() {
+	eg := new(errgroup.Group)
+	eg.Go(func() error {
+		started := dm.start
+		for {
+			time.Sleep(time.Second * 5)
+			wrefs := atomic.LoadInt64(&dm.wrefs)
+			rrefs := atomic.LoadInt64(&dm.rrefs)
+			if (wrefs + rrefs) > 0 {
+				started = time.Now()
+				continue
+			}
+
+			if time.Since(started) > dm.age {
+				dm.op.dmsLock.Lock()
+				delete(dm.op.dms, dm.Name)
+				dm.op.dmsLock.Unlock()
+				os.Remove(dm.localFile())
+				break
+			}
+		}
+
+		return nil
+	})
+
+	eg.Wait()
+}
+
 func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	dm := &DistMem{
 		Name:  name,
@@ -478,9 +540,12 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		meta:  make(map[uint64]*metaT),
 		data:  map[uint64]*memT{},
 		dlocs: []int{},
+		mlock: &sync.Mutex{},
+		dlock: &sync.Mutex{},
 		wmtx:  &sync.Mutex{},
 	}
 
+	atomic.StoreInt32(&dm.on, 1)
 	dm.nodes = []uint64{dm.me()}
 	dm.meta[dm.me()] = &metaT{}
 	dm.data[dm.me()] = &memT{
@@ -491,6 +556,9 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	if len(opts) > 0 {
 		dm.mlimit = opts[0].MemLimit
 		dm.dlimit = opts[0].DiskLimit
+		if opts[0].Expiration > 0 {
+			dm.age = time.Second * time.Duration(opts[0].Expiration)
+		}
 	}
 
 	if dm.mlimit == 0 {
@@ -503,5 +571,11 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		dm.dlimit = 1 << 30 // 1GB by default
 	}
 
+	if dm.age == 0 {
+		dm.age = time.Hour * 2
+	}
+
+	dm.start = time.Now()
+	go dm.cleaner()
 	return dm
 }

@@ -309,9 +309,10 @@ func main() {
 		// limit := 2_500
 
 		dm := func() *hedge.DistMem {
-			dm := op.NewDistMem(name, hedge.Limit{
-				MemLimit:  150_000,
-				DiskLimit: 120_000,
+			dm := op.NewDistMem(name, &hedge.DistMemOptions{
+				MemLimit:   150_000,
+				DiskLimit:  120_000,
+				Expiration: 30,
 			})
 
 			writer, err := dm.Writer()
@@ -372,7 +373,7 @@ func main() {
 			slog.Info("read_dm:", "read_err", reader.Err())
 		}()
 
-		dm.Clear()
+		dm.Close()
 		w.Write([]byte("OK"))
 	})
 

@@ -113,6 +113,8 @@ func (s *service) DMemWrite(hs pb.Hedge_DMemWriteServer) error {
 	ctx := hs.Context()
 	var writer *writerT
 
+	var count int
+
 loop:
 	for {
 		select {
@@ -133,12 +135,16 @@ loop:
 		}
 
 		name := in.Meta[metaName]
-		mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
-		dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
-		s.op.dms[name] = s.op.NewDistMem(name, Limit{
-			MemLimit:  mlimit,
-			DiskLimit: dlimit,
-		})
+		if _, ok := s.op.dms[name]; !ok {
+			mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
+			dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
+			age, _ := strconv.ParseInt(in.Meta[metaExpire], 10, 64)
+			s.op.dms[name] = s.op.NewDistMem(name, &DistMemOptions{
+				MemLimit:   mlimit,
+				DiskLimit:  dlimit,
+				Expiration: age,
+			})
+		}
 
 		if writer == nil {
 			writer, _ = s.op.dms[name].Writer(&writerOptions{
@@ -147,6 +153,7 @@ loop:
 		}
 
 		writer.Write(in.Data)
+		count++
 	}
 
 	if writer != nil {
@@ -169,12 +176,16 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	}
 
 	name := in.Meta[metaName]
-	mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
-	dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
-	s.op.dms[name] = s.op.NewDistMem(name, Limit{
-		MemLimit:  mlimit,
-		DiskLimit: dlimit,
-	})
+	if _, ok := s.op.dms[name]; !ok {
+		mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
+		dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
+		age, _ := strconv.ParseInt(in.Meta[metaExpire], 10, 64)
+		s.op.dms[name] = s.op.NewDistMem(name, &DistMemOptions{
+			MemLimit:   mlimit,
+			DiskLimit:  dlimit,
+			Expiration: age,
+		})
+	}
 
 	reader, _ := s.op.dms[name].Reader(&readerOptions{LocalOnly: true})
 	out := make(chan []byte)
@@ -193,11 +204,15 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	reader.Read(out)
 	eg.Wait()
 
+	if reader != nil {
+		reader.Close()
+	}
+
 	return nil
 }
 
-func (s *service) DMemClear(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
+func (s *service) DMemClose(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
 	name := in.Meta[metaName]
-	s.op.dms[name].Clear()
+	s.op.dms[name].Close()
 	return &pb.Payload{}, nil
 }

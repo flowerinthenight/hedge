@@ -9,7 +9,7 @@ service Hedge {
   rpc Broadcast(stream Payload) returns (stream Payload) {}
   rpc DMemWrite(stream Payload) returns (stream Payload) {}
   rpc DMemRead(stream Payload) returns (stream Payload) {}
-  rpc DMemClear(Payload) returns (Payload) {}
+  rpc DMemClose(Payload) returns (Payload) {}
 }
 
 message Payload {
