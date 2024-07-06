@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -226,7 +225,7 @@ func (w *writer) start() {
 					flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 					file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
 					if err != nil {
-						slog.Error("OpenFile failed:", "err", err)
+						w.dm.op.logger.Println("OpenFile failed:", err)
 					}
 				}
 
@@ -238,10 +237,6 @@ func (w *writer) start() {
 				} else {
 					w.dm.dlocs = append(w.dm.dlocs, n)
 					atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
-
-					if n != len(data) {
-						slog.Info("disk:", "me", w.dm.me(), "written", n, "origlen", len(data))
-					}
 				}
 			}
 		}

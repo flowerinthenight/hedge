@@ -3,7 +3,6 @@ package hedge
 import (
 	"context"
 	"io"
-	"log/slog"
 	"strconv"
 
 	pb "github.com/flowerinthenight/hedge/proto/v1"
@@ -33,6 +32,7 @@ func (s *service) Send(hs pb.Hedge_SendServer) error {
 			}
 
 			if err != nil {
+				s.op.logger.Println("Recv failed:", err)
 				return err
 			}
 
@@ -79,6 +79,7 @@ func (s *service) Broadcast(hs pb.Hedge_BroadcastServer) error {
 			}
 
 			if err != nil {
+				s.op.logger.Println("Recv failed:", err)
 				return err
 			}
 
@@ -130,7 +131,7 @@ loop:
 		}
 
 		if err != nil {
-			s.op.logger.Println("service: Recv failed:", err)
+			s.op.logger.Println("Recv failed:", err)
 			break
 		}
 
@@ -171,7 +172,7 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	}
 
 	if err != nil {
-		s.op.logger.Println("service: Recv failed:", err)
+		s.op.logger.Println("Recv failed:", err)
 		return nil
 	}
 
@@ -194,7 +195,7 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 		for d := range out {
 			err = hs.Send(&pb.Payload{Data: d})
 			if err != nil {
-				slog.Error("Send failed:", "err", err)
+				s.op.logger.Println("Send failed:", err)
 			}
 		}
 

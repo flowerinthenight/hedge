@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner"
-	protov1 "github.com/flowerinthenight/hedge/proto/v1"
+	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"github.com/flowerinthenight/spindle"
 	"github.com/google/uuid"
 	"github.com/hashicorp/memberlist"
@@ -158,8 +158,8 @@ func (w withGrpcHostPort) Apply(op *Op) { op.grpcHostPort = string(w) }
 func WithGrpcHostPort(v string) Option { return withGrpcHostPort(v) }
 
 type StreamMessage struct {
-	Payload *protov1.Payload `json:"payload"`
-	Error   error            `json:"error"`
+	Payload *pb.Payload `json:"payload"`
+	Error   error       `json:"error"`
 }
 
 type withLeaderStreamChannels struct {
@@ -325,7 +325,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 	gs := grpc.NewServer()
 	svc := &service{op: op}
-	protov1.RegisterHedgeServer(gs, svc)
+	pb.RegisterHedgeServer(gs, svc)
 	reflection.Register(gs) // register reflection service
 	go gs.Serve(gl)
 
@@ -777,7 +777,7 @@ func (op *Op) StreamToLeader(ctx context.Context) (*StreamToLeaderOutput, error)
 		return nil, err
 	}
 
-	client := protov1.NewHedgeClient(conn)
+	client := pb.NewHedgeClient(conn)
 	stream, err := client.Send(ctx)
 	if err != nil {
 		return nil, err
@@ -972,7 +972,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 
 	_, gp, _ := net.SplitHostPort(op.grpcHostPort)
 	conns := make(map[string]*grpc.ClientConn)
-	streams := make(map[string]protov1.Hedge_BroadcastClient)
+	streams := make(map[string]pb.Hedge_BroadcastClient)
 	for k := range members {
 		h, _, _ := net.SplitHostPort(k)
 		gHostPort := net.JoinHostPort(h, gp)
@@ -985,7 +985,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 		}
 
 		conns[k] = lconn
-		client := protov1.NewHedgeClient(lconn)
+		client := pb.NewHedgeClient(lconn)
 		stream, err := client.Broadcast(ctx)
 		if err != nil {
 			continue
@@ -1041,7 +1041,7 @@ func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) 
 		var w sync.WaitGroup
 		for k, v := range streams {
 			w.Add(1)
-			go func(node string, stream protov1.Hedge_BroadcastClient) {
+			go func(node string, stream pb.Hedge_BroadcastClient) {
 				defer w.Done()
 				for {
 					resp, err := stream.Recv()
