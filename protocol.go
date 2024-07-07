@@ -142,9 +142,7 @@ func doMembers(ctx context.Context, op *Op, conn net.Conn, msg string) {
 		mlist = append(mlist, k)
 	}
 
-	op.logger.Printf("members=%v, list=%v",
-		len(op.getMembers()), strings.Join(mlist, ","))
-
+	op.logger.Printf("%v member(s) tracked", len(op.getMembers()))
 	reply := op.buildAckReply(nil)
 	conn.Write([]byte(reply))
 }
