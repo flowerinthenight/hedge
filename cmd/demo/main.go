@@ -19,7 +19,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
-	protov1 "github.com/flowerinthenight/hedge/proto/v1"
+	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
@@ -51,8 +51,8 @@ func main() {
 			case m := <-ldrIn:
 				b, _ := json.Marshal(m)
 				slog.Info("input stream:", "val", string(b))
-				ldrOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("one")}}
-				ldrOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("two")}}
+				ldrOut <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("one")}}
+				ldrOut <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("two")}}
 				ldrOut <- nil // end
 			}
 		}
@@ -68,8 +68,8 @@ func main() {
 				return
 			case m := <-bcastIn:
 				slog.Info("input stream:", "val", string(m.Payload.Data))
-				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("1_" + host)}}
-				bcastOut <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("2_" + host)}}
+				bcastOut <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("1_" + host)}}
+				bcastOut <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("2_" + host)}}
 				bcastOut <- nil // end
 			}
 		}
@@ -219,7 +219,7 @@ func main() {
 			return
 		}
 
-		ret.In <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
+		ret.In <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("test")}}
 		close(ret.In) // we're done with input
 		for m := range ret.Out {
 			slog.Info("reply:", "out", string(m.Payload.Data))
@@ -275,7 +275,7 @@ func main() {
 			return
 		}
 
-		ret.In <- &hedge.StreamMessage{Payload: &protov1.Payload{Data: []byte("test")}}
+		ret.In <- &hedge.StreamMessage{Payload: &pb.Payload{Data: []byte("test")}}
 		close(ret.In) // we're done with input
 
 		var wg sync.WaitGroup
