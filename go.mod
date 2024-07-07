@@ -5,7 +5,7 @@ go 1.21
 require (
 	cloud.google.com/go/spanner v1.64.0
 	github.com/cespare/xxhash v1.1.0
-	github.com/flowerinthenight/spindle v1.2.5
+	github.com/flowerinthenight/spindle v1.2.6
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.12.5
 	github.com/hashicorp/memberlist v0.5.1
@@ -52,9 +52,9 @@ require (
 	go.opentelemetry.io/otel v1.28.0 // indirect
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
-	golang.org/x/crypto v0.24.0 // indirect
+	golang.org/x/crypto v0.25.0 // indirect
 	golang.org/x/mod v0.19.0 // indirect
-	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
