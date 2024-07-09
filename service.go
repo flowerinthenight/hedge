@@ -112,7 +112,7 @@ func (s *service) Broadcast(hs pb.Hedge_BroadcastServer) error {
 func (s *service) DMemWrite(hs pb.Hedge_DMemWriteServer) error {
 	var err error
 	ctx := hs.Context()
-	var writer *writer
+	var writer *Writer
 
 	var count int
 
