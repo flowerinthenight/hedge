@@ -21,6 +21,7 @@ import (
 	"github.com/flowerinthenight/hedge"
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"github.com/google/uuid"
+	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -364,6 +365,125 @@ func main() {
 				}
 
 				slog.Info("read_dm:", "i", i, "n", n, "total", total)
+				return nil
+			})
+
+			reader.Read(out)
+			eg.Wait()
+			reader.Close()
+			slog.Info("read_dm:", "read_err", reader.Err())
+		}()
+
+		dm.Close()
+		w.Write([]byte("OK"))
+	})
+
+	mux.HandleFunc("/dmlocal", func(w http.ResponseWriter, r *http.Request) {
+		defer func(start time.Time) {
+			slog.Info("distmem:", "duration", time.Since(start))
+		}(time.Now())
+
+		type kcT struct {
+			Key           string  `json:"key"`
+			TrueUnblended float64 `json:"trueUnblended"`
+			Unblended     float64 `json:"unblended"`
+			Usage         float64 `json:"usage"`
+		}
+
+		locs, _ := os.ReadFile("readlocs")
+		ss := strings.Split(string(locs), " ")
+
+		ra, err := mmap.Open("readdata")
+		if err != nil {
+			slog.Error(err.Error())
+			return
+		}
+
+		defer ra.Close()
+
+		name := "distmem_" + time.Now().Format(time.RFC3339)
+		rname := r.URL.Query().Get("name")
+		if rname != "" {
+			name = rname
+		}
+
+		slog.Info("start distmem:", "name", name)
+
+		dm := func() *hedge.DistMem {
+			dm := op.NewDistMem(name, &hedge.DistMemOptions{
+				MemLimit:   100_000,
+				Expiration: 30,
+			})
+
+			writer, err := dm.Writer()
+			if err != nil {
+				slog.Error("Writer failed:", "err", err)
+				return nil
+			}
+
+			var i, wt int
+			var off int64
+			locs := []int{}
+			for _, sloc := range ss {
+				i++
+				loc, _ := strconv.ParseInt(sloc, 10, 64)
+				locs = append(locs, int(loc))
+				b := make([]byte, loc)
+				n, err := ra.ReadAt(b, off)
+				if err != nil {
+					slog.Error(err.Error())
+					break
+				}
+
+				var kc kcT
+				err = json.Unmarshal(b, &kc)
+				if err != nil {
+					slog.Error(err.Error())
+					break
+				}
+
+				if int64(n) != loc {
+					slog.Error("not equal:", "n", n, "loc", loc)
+				}
+
+				off = off + int64(n)
+				wt += n
+				writer.Write(b)
+			}
+
+			writer.Close()
+			slog.Info("total_write:",
+				"val", wt,
+				"err", writer.Err(),
+			)
+
+			return dm
+		}()
+
+		func() {
+			reader, _ := dm.Reader()
+			out := make(chan []byte)
+			eg := new(errgroup.Group)
+			eg.Go(func() error {
+				var print int
+				var i, rt int
+				for d := range out {
+					i++
+					var kc kcT
+					err = json.Unmarshal(d, &kc)
+					if err != nil {
+						if print < 2 {
+							slog.Error(err.Error(), "i", i, "raw", string(d))
+							print++
+						}
+
+						continue
+					}
+
+					rt += len(d)
+				}
+
+				slog.Info("total_read:", "val", rt)
 				return nil
 			})
 

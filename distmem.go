@@ -59,7 +59,6 @@ type DistMem struct {
 	dlimit uint64            // disk limit
 	hasher hashT             // for node id
 	data   map[uint64]*memT  // mem data
-	mlocs  []int             // mem offsets
 	dlocs  []int             // disk offsets
 	mlock  *sync.Mutex       // local mem lock
 	dlock  *sync.Mutex       // local file lock
@@ -389,7 +388,6 @@ func (r *Reader) Read(out chan []byte) {
 						defer ra.Close()
 						var off int64
 						var count int
-						fails := []int{}
 						for _, loc := range r.dm.dlocs {
 							b := make([]byte, loc)
 							n, err := ra.ReadAt(b, off)
@@ -399,19 +397,9 @@ func (r *Reader) Read(out chan []byte) {
 								r.Unlock()
 							}
 
-							if loc != n {
-								fails = append(fails, []int{n, loc}...)
-							}
-
 							out <- b
-							off = off + int64(off)
+							off = off + int64(n)
 							count++
-						}
-
-						if len(fails) > 0 {
-							r.Lock()
-							r.err = fmt.Errorf("ReadAt failed %v times: %v", len(fails)/2, fails)
-							r.Unlock()
 						}
 					}()
 				}
