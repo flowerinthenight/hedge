@@ -388,7 +388,8 @@ func (r *Reader) Read(out chan []byte) {
 
 						defer ra.Close()
 						var off int64
-						var count, fails int
+						var count int
+						fails := []int{}
 						for _, loc := range r.dm.dlocs {
 							b := make([]byte, loc)
 							n, err := ra.ReadAt(b, off)
@@ -399,18 +400,17 @@ func (r *Reader) Read(out chan []byte) {
 							}
 
 							if loc != n {
-								fails++
+								fails = append(fails, []int{n, loc}...)
 							}
 
-							_ = n
 							out <- b
 							off = off + int64(off)
 							count++
 						}
 
-						if fails > 0 {
+						if len(fails) > 0 {
 							r.Lock()
-							r.err = fmt.Errorf("ReadAt failed %v times", fails)
+							r.err = fmt.Errorf("ReadAt failed %v times: %v", len(fails)/2, fails)
 							r.Unlock()
 						}
 					}()
