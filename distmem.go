@@ -26,6 +26,10 @@ const (
 	metaExpire    = "expire"
 )
 
+var (
+	errNoInit = fmt.Errorf("distmem: not properly initialized")
+)
+
 type metaT struct {
 	msize  uint64
 	dsize  uint64
@@ -37,9 +41,15 @@ type metaT struct {
 }
 
 type DistMemOptions struct {
-	MemLimit   uint64 // mem limit (bytes) before spill-over
-	DiskLimit  uint64 // disk limit (bytes) before spill-over
-	Expiration int64  // expiration in seconds, default 1hr
+	// MemLimit sets the memory limit in bytes to be used per node.
+	MemLimit uint64
+
+	//  DiskLimit sets the disk limit in bytes to be used per node.
+	DiskLimit uint64
+
+	// Expiration sets the TTL (time-to-live) of the backing storage.
+	// If not set, the default is 1hr.
+	Expiration int64
 }
 
 type memT struct {
@@ -50,9 +60,10 @@ type memT struct {
 // DistMem represents an object for distributed memory read/writes.
 type DistMem struct {
 	sync.Mutex
-	Name string
 
-	op     *Op
+	Name string // the name of this instance
+
+	op     *Op               // cluster coordinator
 	nodes  []uint64          // 0=local, 1..n=network
 	meta   map[uint64]*metaT // per-node metadata, key=node
 	mlimit uint64            // mem limit
@@ -279,6 +290,10 @@ type writerOptions struct {
 // caller needs to call writer.Close() after use. Options is only
 // used internally, not exposed to callers.
 func (dm *DistMem) Writer(opts ...*writerOptions) (*Writer, error) {
+	if atomic.LoadInt32(&dm.on) == 0 {
+		return nil, errNoInit
+	}
+
 	dm.wmtx.Lock()
 	var localOnly bool
 	if len(opts) > 0 {
@@ -435,6 +450,10 @@ type readerOptions struct {
 // The caller needs to call reader.Close() after use. Options is
 // only used internally, not exposed to callers.
 func (dm *DistMem) Reader(opts ...*readerOptions) (*Reader, error) {
+	if atomic.LoadInt32(&dm.on) == 0 {
+		return nil, errNoInit
+	}
+
 	var localOnly bool
 	if len(opts) > 0 {
 		localOnly = opts[0].LocalOnly
