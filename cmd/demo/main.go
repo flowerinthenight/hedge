@@ -334,8 +334,18 @@ func main() {
 			return dm
 		}()
 
+		if dm == nil {
+			slog.Error("failed in creating DistMem object")
+			return
+		}
+
 		func() {
-			reader, _ := dm.Reader()
+			reader, err := dm.Reader()
+			if err != nil {
+				slog.Error(err.Error())
+				return
+			}
+
 			out := make(chan []byte)
 			eg := new(errgroup.Group)
 			eg.Go(func() error {
