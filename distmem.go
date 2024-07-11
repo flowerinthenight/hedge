@@ -62,7 +62,7 @@ type memT struct {
 // See limitation below.
 //
 // Limitation: At the moment, it's not allowed to reuse a name for
-// DistMem once it's used and closed.
+// DistMem once it's used and closed within hedge's lifetime.
 type DistMem struct {
 	sync.Mutex
 
