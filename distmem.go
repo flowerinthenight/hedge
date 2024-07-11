@@ -611,7 +611,7 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	}
 
 	if dm.age == 0 {
-		dm.age = time.Hour * 2
+		dm.age = time.Hour * 1
 	}
 
 	dm.start = time.Now()
