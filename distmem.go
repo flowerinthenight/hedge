@@ -31,9 +31,9 @@ var (
 )
 
 type metaT struct {
-	msize  uint64
-	dsize  uint64
-	grpc   int32
+	msize  atomic.Uint64
+	dsize  atomic.Uint64
+	grpc   atomic.Int32
 	conn   *grpc.ClientConn
 	client pb.HedgeClient
 	writer pb.Hedge_DMemWriteClient
@@ -71,8 +71,8 @@ type DistMem struct {
 	op     *Op               // cluster coordinator
 	nodes  []uint64          // 0=local, 1..n=network
 	meta   map[uint64]*metaT // per-node metadata, key=node
-	mlimit uint64            // mem limit
-	dlimit uint64            // disk limit
+	mlimit atomic.Uint64     // mem limit
+	dlimit atomic.Uint64     // disk limit
 	hasher hashT             // for node id
 	data   map[uint64]*memT  // mem data , key=node
 	dlocs  []int             // disk offsets
@@ -80,9 +80,9 @@ type DistMem struct {
 	dlock  *sync.Mutex       // local file lock
 	wmtx   *sync.Mutex       // one active writer only
 	writer *Writer           // writer object
-	wrefs  int64             // writer reference count
-	rrefs  int64             // reader reference count
-	on     int32
+	wrefs  atomic.Int64      // writer reference count
+	rrefs  atomic.Int64      // reader reference count
+	on     atomic.Int32
 
 	age   time.Duration
 	start time.Time
@@ -93,7 +93,7 @@ type Writer struct {
 	lo   bool // local write only
 	dm   *DistMem
 	ch   chan []byte
-	on   int32
+	on   atomic.Int32
 	err  error
 	done chan struct{}
 }
@@ -110,20 +110,20 @@ func (w *Writer) Write(data []byte) { w.ch <- data }
 
 // Close closes the writer object.
 func (w *Writer) Close() {
-	if atomic.LoadInt32(&w.on) == 0 {
+	if w.on.Load() == 0 {
 		return
 	}
 
 	close(w.ch)
 	<-w.done // wait for start()
-	atomic.StoreInt32(&w.on, 0)
-	atomic.AddInt64(&w.dm.wrefs, -1)
+	w.on.Store(0)
+	w.dm.wrefs.Add(-1)
 	w.dm.wmtx.Unlock()
 }
 
 func (w *Writer) start() {
 	defer func() { w.done <- struct{}{} }()
-	atomic.StoreInt32(&w.on, 1)
+	w.on.Store(1)
 	ctx := context.Background()
 	node := w.dm.nodes[0]
 	var file *os.File
@@ -141,10 +141,10 @@ func (w *Writer) start() {
 		allCount++
 		var err error
 		var nextName string
-		msize := atomic.LoadUint64(&w.dm.meta[node].msize)
-		mlimit := atomic.LoadUint64(&w.dm.mlimit)
-		dsize := atomic.LoadUint64(&w.dm.meta[node].dsize)
-		dlimit := atomic.LoadUint64(&w.dm.dlimit)
+		msize := w.dm.meta[node].msize.Load()
+		mlimit := w.dm.mlimit.Load()
+		dsize := w.dm.meta[node].dsize.Load()
+		dlimit := w.dm.dlimit.Load()
 
 		// Local (or next hop) is full. Go to the next node.
 		if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
@@ -157,7 +157,7 @@ func (w *Writer) start() {
 				continue
 			}
 
-			if atomic.LoadInt32(&w.dm.meta[node].grpc) == 0 {
+			if w.dm.meta[node].grpc.Load() == 0 {
 				err = func() error {
 					host, port, _ := net.SplitHostPort(nextName)
 					pi, _ := strconv.Atoi(port)
@@ -176,7 +176,7 @@ func (w *Writer) start() {
 						return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
 					}
 
-					atomic.AddInt32(&w.dm.meta[node].grpc, 1)
+					w.dm.meta[node].grpc.Add(1)
 					return nil
 				}()
 
@@ -194,8 +194,8 @@ func (w *Writer) start() {
 			err := w.dm.meta[node].writer.Send(&pb.Payload{
 				Meta: map[string]string{
 					metaName:      w.dm.Name,
-					metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit),
-					metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit),
+					metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit.Load()),
+					metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit.Load()),
 					metaExpire:    fmt.Sprintf("%v", int64(w.dm.age.Seconds())),
 				},
 				Data: data,
@@ -207,7 +207,7 @@ func (w *Writer) start() {
 				w.Unlock()
 			}
 
-			atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
+			w.dm.meta[node].msize.Add(uint64(len(data)))
 		default:
 			if msize < mlimit {
 				memCount++
@@ -225,7 +225,7 @@ func (w *Writer) start() {
 
 				w.dm.data[node].data = append(w.dm.data[node].data, data...)
 				w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, len(data))
-				atomic.AddUint64(&w.dm.meta[node].msize, uint64(len(data)))
+				w.dm.meta[node].msize.Add(uint64(len(data)))
 			} else {
 				diskCount++
 				if !dlock {
@@ -248,7 +248,7 @@ func (w *Writer) start() {
 					w.Unlock()
 				} else {
 					w.dm.dlocs = append(w.dm.dlocs, n)
-					atomic.AddUint64(&w.dm.meta[node].dsize, uint64(n))
+					w.dm.meta[node].dsize.Add(uint64(n))
 				}
 			}
 		}
@@ -295,7 +295,7 @@ type writerOptions struct {
 // caller needs to call writer.Close() after use. Options is only
 // used internally, not exposed to callers.
 func (dm *DistMem) Writer(opts ...*writerOptions) (*Writer, error) {
-	if atomic.LoadInt32(&dm.on) == 0 {
+	if dm.on.Load() == 0 {
 		return nil, errNoInit
 	}
 
@@ -313,7 +313,7 @@ func (dm *DistMem) Writer(opts ...*writerOptions) (*Writer, error) {
 	}
 
 	go dm.writer.start()
-	atomic.AddInt64(&dm.wrefs, 1)
+	dm.wrefs.Add(1)
 	return dm.writer, nil
 }
 
@@ -321,7 +321,7 @@ type Reader struct {
 	sync.Mutex
 	lo   bool // local read only
 	dm   *DistMem
-	on   int32
+	on   atomic.Int32
 	err  error
 	done chan struct{}
 }
@@ -330,7 +330,7 @@ type Reader struct {
 func (r *Reader) Read(out chan []byte) {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
-		atomic.StoreInt32(&r.on, 1)
+		r.on.Store(1)
 		ctx := context.Background()
 		for _, node := range r.dm.nodes {
 			var err error
@@ -349,8 +349,8 @@ func (r *Reader) Read(out chan []byte) {
 				err = r.dm.meta[node].reader.Send(&pb.Payload{
 					Meta: map[string]string{
 						metaName:      r.dm.Name,
-						metaMemLimit:  fmt.Sprintf("%v", r.dm.mlimit),
-						metaDiskLimit: fmt.Sprintf("%v", r.dm.dlimit),
+						metaMemLimit:  fmt.Sprintf("%v", r.dm.mlimit.Load()),
+						metaDiskLimit: fmt.Sprintf("%v", r.dm.dlimit.Load()),
 						metaExpire:    fmt.Sprintf("%v", int64(r.dm.age.Seconds())),
 					},
 				})
@@ -438,13 +438,13 @@ func (r *Reader) Err() error {
 
 // Close closes the reader object.
 func (r *Reader) Close() {
-	if atomic.LoadInt32(&r.on) == 0 {
+	if r.on.Load() == 0 {
 		return
 	}
 
 	<-r.done // wait for loop()
-	atomic.AddInt64(&r.dm.rrefs, -1)
-	atomic.StoreInt32(&r.on, 0)
+	r.dm.rrefs.Add(-1)
+	r.on.Store(0)
 }
 
 type readerOptions struct {
@@ -455,7 +455,7 @@ type readerOptions struct {
 // The caller needs to call reader.Close() after use. Options is
 // only used internally, not exposed to callers.
 func (dm *DistMem) Reader(opts ...*readerOptions) (*Reader, error) {
-	if atomic.LoadInt32(&dm.on) == 0 {
+	if dm.on.Load() == 0 {
 		return nil, errNoInit
 	}
 
@@ -470,13 +470,13 @@ func (dm *DistMem) Reader(opts ...*readerOptions) (*Reader, error) {
 		done: make(chan struct{}, 1),
 	}
 
-	atomic.AddInt64(&dm.rrefs, 1)
+	dm.rrefs.Add(1)
 	return reader, nil
 }
 
 // Close closes the DistMem object.
 func (dm *DistMem) Close() {
-	if atomic.LoadInt32(&dm.on) == 0 {
+	if dm.on.Load() == 0 {
 		return
 	}
 
@@ -496,7 +496,7 @@ func (dm *DistMem) Close() {
 		}
 	}
 
-	atomic.StoreInt32(&dm.on, 0)
+	dm.on.Store(0)
 }
 
 func (dm *DistMem) nextNode() (string, uint64) {
@@ -536,8 +536,8 @@ func (dm *DistMem) cleaner() {
 		started := dm.start
 		for {
 			time.Sleep(time.Second * 5)
-			wrefs := atomic.LoadInt64(&dm.wrefs)
-			rrefs := atomic.LoadInt64(&dm.rrefs)
+			wrefs := dm.wrefs.Load()
+			rrefs := dm.rrefs.Load()
 			if (wrefs + rrefs) > 0 {
 				started = time.Now()
 				continue
@@ -584,7 +584,7 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		wmtx:  &sync.Mutex{},
 	}
 
-	atomic.StoreInt32(&dm.on, 1)
+	dm.on.Store(1)
 	dm.nodes = []uint64{dm.me()}
 	dm.meta[dm.me()] = &metaT{}
 	dm.data[dm.me()] = &memT{
@@ -593,21 +593,21 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 	}
 
 	if len(opts) > 0 {
-		dm.mlimit = opts[0].MemLimit
-		dm.dlimit = opts[0].DiskLimit
+		dm.mlimit.Store(opts[0].MemLimit)
+		dm.dlimit.Store(opts[0].DiskLimit)
 		if opts[0].Expiration > 0 {
 			dm.age = time.Second * time.Duration(opts[0].Expiration)
 		}
 	}
 
-	if dm.mlimit == 0 {
+	if dm.mlimit.Load() == 0 {
 		si := syscall.Sysinfo_t{}
 		syscall.Sysinfo(&si)
-		dm.mlimit = si.Freeram / 2 // half of free mem
+		dm.mlimit.Store(si.Freeram / 2) // half of free mem
 	}
 
-	if dm.dlimit == 0 {
-		dm.dlimit = 1 << 30 // 1GB by default
+	if dm.dlimit.Load() == 0 {
+		dm.dlimit.Store(1 << 30) // 1GB by default
 	}
 
 	if dm.age == 0 {
