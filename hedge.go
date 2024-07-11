@@ -227,13 +227,13 @@ type Op struct {
 	syncInterval  time.Duration       // ensure membership
 	mtx           sync.Mutex          // local mutex
 	mtxSem        sync.Mutex          // semaphore mutex
-	ensureOn      int32               // 1=semaphore checker running
+	ensureOn      atomic.Int32        // 1=semaphore checker running
 	ensureCh      chan string         // please check this id
 	ensureCtx     context.Context
 	ensureCancel  context.CancelFunc
 	ensureDone    chan struct{}
-	active        int32       // 1=running, 0=off
-	logger        *log.Logger // internal logger
+	active        atomic.Int32 // 1=running, 0=off
+	logger        *log.Logger  // internal logger
 }
 
 // String implements the Stringer interface.
@@ -253,7 +253,7 @@ func (op *Op) HostPort() string { return op.hostPort }
 func (op *Op) Name() string { return op.hostPort }
 
 // IsRunning returns true if Op is already running.
-func (op *Op) IsRunning() bool { return atomic.LoadInt32(&op.active) == 1 }
+func (op *Op) IsRunning() bool { return op.active.Load() == 1 }
 
 // Run starts the main handler. It blocks until ctx is cancelled,
 // optionally sending an error message to done when finished.
@@ -360,10 +360,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	}()
 
 	go func() {
-		var active int32
+		var active atomic.Int32
 		fnEnsureMembers := func() {
-			atomic.StoreInt32(&active, 1)
-			defer atomic.StoreInt32(&active, 0)
+			active.Store(1)
+			defer active.Store(0)
 			ch := make(chan *string)
 			emdone := make(chan struct{}, 1)
 			todel := []string{}
@@ -438,10 +438,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			w.Wait()
 		}
 
-		var hbactive int32
+		var hbactive atomic.Int32
 		fnHeartbeat := func() {
-			atomic.StoreInt32(&hbactive, 1)
-			defer atomic.StoreInt32(&hbactive, 0)
+			hbactive.Store(1)
+			defer hbactive.Store(0)
 			lconn, err := op.getLeaderConn(ctx)
 			if err != nil {
 				return
@@ -479,7 +479,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				return
 			}
 
-			if atomic.LoadInt32(&hbactive) == 0 {
+			if hbactive.Load() == 0 {
 				go fnHeartbeat() // tell leader we're online
 			}
 
@@ -487,19 +487,19 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				continue
 			}
 
-			if atomic.LoadInt32(&active) == 0 {
+			if active.Load() == 0 {
 				go fnEnsureMembers() // leader only
 			}
 		}
 	}()
 
-	atomic.StoreInt32(&op.active, 1)
-	defer atomic.StoreInt32(&op.active, 0)
+	op.active.Store(1)
+	defer op.active.Store(0)
 
 	<-ctx.Done() // wait for termination
 
 	gs.GracefulStop() // stop grpc server
-	if atomic.LoadInt32(&op.ensureOn) == 1 {
+	if op.ensureOn.Load() == 1 {
 		op.ensureCancel() // stop semaphore checker;
 		<-op.ensureDone   // and wait
 	}
@@ -513,7 +513,7 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 		return nil, ErrNotSupported
 	}
 
-	if atomic.LoadInt32(&op.active) != 1 {
+	if op.active.Load() != 1 {
 		return nil, ErrNotRunning
 	}
 
@@ -864,7 +864,7 @@ type BroadcastArgs struct {
 // the return value (output slice) will be set to empty []. Also, close() will be called on the
 // Out channel to indicate streaming end.
 func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) []BroadcastOutput {
-	if atomic.LoadInt32(&op.active) != 1 || op.fnBroadcast == nil {
+	if op.active.Load() != 1 || op.fnBroadcast == nil {
 		return nil // not running or no broadcast support
 	}
 
@@ -956,7 +956,7 @@ type StreamBroadcastOutput struct {
 // StreamBroadcast is sequential in the sense that you need to send all your input messages first before getting
 // any response from all the nodes.
 func (op *Op) StreamBroadcast(ctx context.Context, args ...StreamBroadcastArgs) (*StreamBroadcastOutput, error) {
-	if atomic.LoadInt32(&op.active) != 1 {
+	if op.active.Load() != 1 {
 		return nil, nil // not running
 	}
 
@@ -1124,10 +1124,10 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
-	var active int32
+	var active atomic.Int32
 	getConn := func() (net.Conn, error) {
-		atomic.StoreInt32(&active, 1)
-		defer atomic.StoreInt32(&active, 0)
+		active.Store(1)
+		defer active.Store(0)
 		timeout := time.Second * 5
 		leader, err := op.Leader()
 		if err != nil {
@@ -1172,7 +1172,7 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 		case <-ticker.C:
 		}
 
-		if atomic.LoadInt32(&active) == 1 {
+		if active.Load() == 1 {
 			continue
 		}
 
@@ -1206,10 +1206,10 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
-	var active int32
+	var active atomic.Int32
 	getConn := func() (*grpc.ClientConn, error) {
-		atomic.StoreInt32(&active, 1)
-		defer atomic.StoreInt32(&active, 0)
+		active.Store(1)
+		defer active.Store(0)
 		leader, err := op.Leader()
 		if err != nil {
 			return nil, err
@@ -1247,7 +1247,7 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 		case <-ticker.C:
 		}
 
-		if atomic.LoadInt32(&active) == 1 {
+		if active.Load() == 1 {
 			continue
 		}
 

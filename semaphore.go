@@ -49,10 +49,10 @@ func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 	ticker := time.NewTicker(time.Second * 1)
 	defer ticker.Stop()
 
-	var active int32
+	var active atomic.Int32
 	acquire := func() (bool, error) { // true means okay to retry
-		atomic.StoreInt32(&active, 1)
-		defer atomic.StoreInt32(&active, 0)
+		active.Store(1)
+		defer active.Store(0)
 		conn, err := s.op.getLeaderConn(ctx)
 		if err != nil {
 			return true, err
@@ -97,7 +97,7 @@ func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 		case <-ticker.C:
 		}
 
-		if atomic.LoadInt32(&active) == 1 {
+		if active.Load() == 1 {
 			continue
 		}
 
@@ -345,6 +345,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 }
 
 func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, limit int) error {
+	_ = limit
 	_, err := op.spannerClient.ReadWriteTransaction(ctx,
 		func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 			// First, attempt to remove the calling entry.
@@ -437,12 +438,12 @@ func (e *ensureT) exists(name string) bool {
 
 // Triggered during semaphore acquisition; meaning, this is only called when we are leader.
 func ensureLiveness(ctx context.Context, op *Op) {
-	if atomic.LoadInt32(&op.ensureOn) == 1 {
+	if op.ensureOn.Load() == 1 {
 		return // one checker per leader
 	}
 
-	atomic.StoreInt32(&op.ensureOn, 1)
-	defer atomic.StoreInt32(&op.ensureOn, 0)
+	op.ensureOn.Store(1)
+	defer op.ensureOn.Store(0)
 	op.ensureCtx, op.ensureCancel = context.WithCancel(ctx)
 
 	enlock := ensureLock()
