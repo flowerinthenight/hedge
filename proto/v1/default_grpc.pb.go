@@ -20,9 +20,9 @@ const _ = grpc.SupportPackageIsVersion7
 type HedgeClient interface {
 	Send(ctx context.Context, opts ...grpc.CallOption) (Hedge_SendClient, error)
 	Broadcast(ctx context.Context, opts ...grpc.CallOption) (Hedge_BroadcastClient, error)
-	DMemWrite(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemWriteClient, error)
-	DMemRead(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemReadClient, error)
-	DMemClose(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error)
+	SoSWrite(ctx context.Context, opts ...grpc.CallOption) (Hedge_SoSWriteClient, error)
+	SoSRead(ctx context.Context, opts ...grpc.CallOption) (Hedge_SoSReadClient, error)
+	SoSClose(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error)
 }
 
 type hedgeClient struct {
@@ -95,30 +95,30 @@ func (x *hedgeBroadcastClient) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func (c *hedgeClient) DMemWrite(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemWriteClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[2], "/hedge.proto.v1.Hedge/DMemWrite", opts...)
+func (c *hedgeClient) SoSWrite(ctx context.Context, opts ...grpc.CallOption) (Hedge_SoSWriteClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[2], "/hedge.proto.v1.Hedge/SoSWrite", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &hedgeDMemWriteClient{stream}
+	x := &hedgeSoSWriteClient{stream}
 	return x, nil
 }
 
-type Hedge_DMemWriteClient interface {
+type Hedge_SoSWriteClient interface {
 	Send(*Payload) error
 	Recv() (*Payload, error)
 	grpc.ClientStream
 }
 
-type hedgeDMemWriteClient struct {
+type hedgeSoSWriteClient struct {
 	grpc.ClientStream
 }
 
-func (x *hedgeDMemWriteClient) Send(m *Payload) error {
+func (x *hedgeSoSWriteClient) Send(m *Payload) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *hedgeDMemWriteClient) Recv() (*Payload, error) {
+func (x *hedgeSoSWriteClient) Recv() (*Payload, error) {
 	m := new(Payload)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -126,30 +126,30 @@ func (x *hedgeDMemWriteClient) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func (c *hedgeClient) DMemRead(ctx context.Context, opts ...grpc.CallOption) (Hedge_DMemReadClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[3], "/hedge.proto.v1.Hedge/DMemRead", opts...)
+func (c *hedgeClient) SoSRead(ctx context.Context, opts ...grpc.CallOption) (Hedge_SoSReadClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Hedge_ServiceDesc.Streams[3], "/hedge.proto.v1.Hedge/SoSRead", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &hedgeDMemReadClient{stream}
+	x := &hedgeSoSReadClient{stream}
 	return x, nil
 }
 
-type Hedge_DMemReadClient interface {
+type Hedge_SoSReadClient interface {
 	Send(*Payload) error
 	Recv() (*Payload, error)
 	grpc.ClientStream
 }
 
-type hedgeDMemReadClient struct {
+type hedgeSoSReadClient struct {
 	grpc.ClientStream
 }
 
-func (x *hedgeDMemReadClient) Send(m *Payload) error {
+func (x *hedgeSoSReadClient) Send(m *Payload) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *hedgeDMemReadClient) Recv() (*Payload, error) {
+func (x *hedgeSoSReadClient) Recv() (*Payload, error) {
 	m := new(Payload)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -157,9 +157,9 @@ func (x *hedgeDMemReadClient) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func (c *hedgeClient) DMemClose(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error) {
+func (c *hedgeClient) SoSClose(ctx context.Context, in *Payload, opts ...grpc.CallOption) (*Payload, error) {
 	out := new(Payload)
-	err := c.cc.Invoke(ctx, "/hedge.proto.v1.Hedge/DMemClose", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/hedge.proto.v1.Hedge/SoSClose", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,9 +172,9 @@ func (c *hedgeClient) DMemClose(ctx context.Context, in *Payload, opts ...grpc.C
 type HedgeServer interface {
 	Send(Hedge_SendServer) error
 	Broadcast(Hedge_BroadcastServer) error
-	DMemWrite(Hedge_DMemWriteServer) error
-	DMemRead(Hedge_DMemReadServer) error
-	DMemClose(context.Context, *Payload) (*Payload, error)
+	SoSWrite(Hedge_SoSWriteServer) error
+	SoSRead(Hedge_SoSReadServer) error
+	SoSClose(context.Context, *Payload) (*Payload, error)
 	mustEmbedUnimplementedHedgeServer()
 }
 
@@ -188,14 +188,14 @@ func (UnimplementedHedgeServer) Send(Hedge_SendServer) error {
 func (UnimplementedHedgeServer) Broadcast(Hedge_BroadcastServer) error {
 	return status.Errorf(codes.Unimplemented, "method Broadcast not implemented")
 }
-func (UnimplementedHedgeServer) DMemWrite(Hedge_DMemWriteServer) error {
-	return status.Errorf(codes.Unimplemented, "method DMemWrite not implemented")
+func (UnimplementedHedgeServer) SoSWrite(Hedge_SoSWriteServer) error {
+	return status.Errorf(codes.Unimplemented, "method SoSWrite not implemented")
 }
-func (UnimplementedHedgeServer) DMemRead(Hedge_DMemReadServer) error {
-	return status.Errorf(codes.Unimplemented, "method DMemRead not implemented")
+func (UnimplementedHedgeServer) SoSRead(Hedge_SoSReadServer) error {
+	return status.Errorf(codes.Unimplemented, "method SoSRead not implemented")
 }
-func (UnimplementedHedgeServer) DMemClose(context.Context, *Payload) (*Payload, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DMemClose not implemented")
+func (UnimplementedHedgeServer) SoSClose(context.Context, *Payload) (*Payload, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SoSClose not implemented")
 }
 func (UnimplementedHedgeServer) mustEmbedUnimplementedHedgeServer() {}
 
@@ -262,25 +262,25 @@ func (x *hedgeBroadcastServer) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func _Hedge_DMemWrite_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(HedgeServer).DMemWrite(&hedgeDMemWriteServer{stream})
+func _Hedge_SoSWrite_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HedgeServer).SoSWrite(&hedgeSoSWriteServer{stream})
 }
 
-type Hedge_DMemWriteServer interface {
+type Hedge_SoSWriteServer interface {
 	Send(*Payload) error
 	Recv() (*Payload, error)
 	grpc.ServerStream
 }
 
-type hedgeDMemWriteServer struct {
+type hedgeSoSWriteServer struct {
 	grpc.ServerStream
 }
 
-func (x *hedgeDMemWriteServer) Send(m *Payload) error {
+func (x *hedgeSoSWriteServer) Send(m *Payload) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *hedgeDMemWriteServer) Recv() (*Payload, error) {
+func (x *hedgeSoSWriteServer) Recv() (*Payload, error) {
 	m := new(Payload)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -288,25 +288,25 @@ func (x *hedgeDMemWriteServer) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func _Hedge_DMemRead_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(HedgeServer).DMemRead(&hedgeDMemReadServer{stream})
+func _Hedge_SoSRead_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HedgeServer).SoSRead(&hedgeSoSReadServer{stream})
 }
 
-type Hedge_DMemReadServer interface {
+type Hedge_SoSReadServer interface {
 	Send(*Payload) error
 	Recv() (*Payload, error)
 	grpc.ServerStream
 }
 
-type hedgeDMemReadServer struct {
+type hedgeSoSReadServer struct {
 	grpc.ServerStream
 }
 
-func (x *hedgeDMemReadServer) Send(m *Payload) error {
+func (x *hedgeSoSReadServer) Send(m *Payload) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *hedgeDMemReadServer) Recv() (*Payload, error) {
+func (x *hedgeSoSReadServer) Recv() (*Payload, error) {
 	m := new(Payload)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -314,20 +314,20 @@ func (x *hedgeDMemReadServer) Recv() (*Payload, error) {
 	return m, nil
 }
 
-func _Hedge_DMemClose_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Hedge_SoSClose_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Payload)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HedgeServer).DMemClose(ctx, in)
+		return srv.(HedgeServer).SoSClose(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/hedge.proto.v1.Hedge/DMemClose",
+		FullMethod: "/hedge.proto.v1.Hedge/SoSClose",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HedgeServer).DMemClose(ctx, req.(*Payload))
+		return srv.(HedgeServer).SoSClose(ctx, req.(*Payload))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -340,8 +340,8 @@ var Hedge_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*HedgeServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "DMemClose",
-			Handler:    _Hedge_DMemClose_Handler,
+			MethodName: "SoSClose",
+			Handler:    _Hedge_SoSClose_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -358,14 +358,14 @@ var Hedge_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "DMemWrite",
-			Handler:       _Hedge_DMemWrite_Handler,
+			StreamName:    "SoSWrite",
+			Handler:       _Hedge_SoSWrite_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "DMemRead",
-			Handler:       _Hedge_DMemRead_Handler,
+			StreamName:    "SoSRead",
+			Handler:       _Hedge_SoSRead_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

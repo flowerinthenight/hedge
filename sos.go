@@ -27,7 +27,7 @@ const (
 )
 
 var (
-	errNoInit = fmt.Errorf("distmem: not properly initialized")
+	errNoInit = fmt.Errorf("sos: not properly initialized")
 )
 
 type metaT struct {
@@ -36,11 +36,11 @@ type metaT struct {
 	grpc   atomic.Int32
 	conn   *grpc.ClientConn
 	client pb.HedgeClient
-	writer pb.Hedge_DMemWriteClient
-	reader pb.Hedge_DMemReadClient
+	writer pb.Hedge_SoSWriteClient
+	reader pb.Hedge_SoSReadClient
 }
 
-type DistMemOptions struct {
+type SoSOptions struct {
 	// MemLimit sets the memory limit in bytes to be used per node.
 	MemLimit uint64
 
@@ -57,13 +57,13 @@ type memT struct {
 	mlocs []int
 }
 
-// DistMem represents an object for distributed memory read/writes.
-// Useful only for load-process-discard types of data processing.
+// SoS (Spillover-Store) represents an object for spill-over (or stitched)
+// storage. Useful only for load-process-discard types of data processing.
 // See limitation below.
 //
-// Limitation: At the moment, it's not allowed to reuse a name for
-// DistMem once it's used and closed within hedge's lifetime.
-type DistMem struct {
+// Limitation: At the moment, it's not allowed to reuse a name for SOS
+// once it's used and closed within hedge's lifetime.
+type SoS struct {
 	sync.Mutex
 
 	Name string // the name of this instance
@@ -91,7 +91,7 @@ type DistMem struct {
 type Writer struct {
 	sync.Mutex
 	lo   bool // local write only
-	dm   *DistMem
+	sos  *SoS
 	ch   chan []byte
 	on   atomic.Int32
 	err  error
@@ -117,15 +117,15 @@ func (w *Writer) Close() {
 	close(w.ch)
 	<-w.done // wait for start()
 	w.on.Store(0)
-	w.dm.wrefs.Add(-1)
-	w.dm.wmtx.Unlock()
+	w.sos.wrefs.Add(-1)
+	w.sos.wmtx.Unlock()
 }
 
 func (w *Writer) start() {
 	defer func() { w.done <- struct{}{} }()
 	w.on.Store(1)
 	ctx := context.Background()
-	node := w.dm.nodes[0]
+	node := w.sos.nodes[0]
 	var file *os.File
 
 	var allCount int
@@ -141,14 +141,14 @@ func (w *Writer) start() {
 		allCount++
 		var err error
 		var nextName string
-		msize := w.dm.meta[node].msize.Load()
-		mlimit := w.dm.mlimit.Load()
-		dsize := w.dm.meta[node].dsize.Load()
-		dlimit := w.dm.dlimit.Load()
+		msize := w.sos.meta[node].msize.Load()
+		mlimit := w.sos.mlimit.Load()
+		dsize := w.sos.meta[node].dsize.Load()
+		dlimit := w.sos.dlimit.Load()
 
 		// Local (or next hop) is full. Go to the next node.
 		if !w.lo && ((msize + dsize) >= (mlimit + dlimit)) {
-			nextName, node = w.dm.nextNode()
+			nextName, node = w.sos.nextNode()
 			if nextName == "" {
 				failCount++
 				w.Lock()
@@ -157,7 +157,7 @@ func (w *Writer) start() {
 				continue
 			}
 
-			if w.dm.meta[node].grpc.Load() == 0 {
+			if w.sos.meta[node].grpc.Load() == 0 {
 				err = func() error {
 					host, port, _ := net.SplitHostPort(nextName)
 					pi, _ := strconv.Atoi(port)
@@ -165,18 +165,18 @@ func (w *Writer) start() {
 
 					var opts []grpc.DialOption
 					opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-					w.dm.meta[node].conn, err = grpc.NewClient(nextName, opts...)
+					w.sos.meta[node].conn, err = grpc.NewClient(nextName, opts...)
 					if err != nil {
 						return fmt.Errorf("NewClient (%v) failed: %w", nextName, err)
 					}
 
-					w.dm.meta[node].client = pb.NewHedgeClient(w.dm.meta[node].conn)
-					w.dm.meta[node].writer, err = w.dm.meta[node].client.DMemWrite(ctx)
+					w.sos.meta[node].client = pb.NewHedgeClient(w.sos.meta[node].conn)
+					w.sos.meta[node].writer, err = w.sos.meta[node].client.SoSWrite(ctx)
 					if err != nil {
 						return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
 					}
 
-					w.dm.meta[node].grpc.Add(1)
+					w.sos.meta[node].grpc.Add(1)
 					return nil
 				}()
 
@@ -189,14 +189,14 @@ func (w *Writer) start() {
 		}
 
 		switch {
-		case !w.lo && node != w.dm.me():
+		case !w.lo && node != w.sos.me():
 			netCount++
-			err := w.dm.meta[node].writer.Send(&pb.Payload{
+			err := w.sos.meta[node].writer.Send(&pb.Payload{
 				Meta: map[string]string{
-					metaName:      w.dm.Name,
-					metaMemLimit:  fmt.Sprintf("%v", w.dm.mlimit.Load()),
-					metaDiskLimit: fmt.Sprintf("%v", w.dm.dlimit.Load()),
-					metaExpire:    fmt.Sprintf("%v", int64(w.dm.age.Seconds())),
+					metaName:      w.sos.Name,
+					metaMemLimit:  fmt.Sprintf("%v", w.sos.mlimit.Load()),
+					metaDiskLimit: fmt.Sprintf("%v", w.sos.dlimit.Load()),
+					metaExpire:    fmt.Sprintf("%v", int64(w.sos.age.Seconds())),
 				},
 				Data: data,
 			})
@@ -207,37 +207,37 @@ func (w *Writer) start() {
 				w.Unlock()
 			}
 
-			w.dm.meta[node].msize.Add(uint64(len(data)))
+			w.sos.meta[node].msize.Add(uint64(len(data)))
 		default:
 			if msize < mlimit {
 				memCount++
 				if !mlock {
-					w.dm.mlock.Lock()
+					w.sos.mlock.Lock()
 					mlock = true
 				}
 
-				if _, ok := w.dm.data[node]; !ok {
-					w.dm.data[node] = &memT{
+				if _, ok := w.sos.data[node]; !ok {
+					w.sos.data[node] = &memT{
 						data:  []byte{},
 						mlocs: []int{},
 					}
 				}
 
-				w.dm.data[node].data = append(w.dm.data[node].data, data...)
-				w.dm.data[node].mlocs = append(w.dm.data[node].mlocs, len(data))
-				w.dm.meta[node].msize.Add(uint64(len(data)))
+				w.sos.data[node].data = append(w.sos.data[node].data, data...)
+				w.sos.data[node].mlocs = append(w.sos.data[node].mlocs, len(data))
+				w.sos.meta[node].msize.Add(uint64(len(data)))
 			} else {
 				diskCount++
 				if !dlock {
-					w.dm.dlock.Lock()
+					w.sos.dlock.Lock()
 					dlock = true
 				}
 
 				if file == nil {
 					flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-					file, err = os.OpenFile(w.dm.localFile(), flag, 0644)
+					file, err = os.OpenFile(w.sos.localFile(), flag, 0644)
 					if err != nil {
-						w.dm.op.logger.Println("OpenFile failed:", err)
+						w.sos.op.logger.Println("OpenFile failed:", err)
 					}
 				}
 
@@ -247,8 +247,8 @@ func (w *Writer) start() {
 					w.err = fmt.Errorf("Write failed: %w", err)
 					w.Unlock()
 				} else {
-					w.dm.dlocs = append(w.dm.dlocs, n)
-					w.dm.meta[node].dsize.Add(uint64(n))
+					w.sos.dlocs = append(w.sos.dlocs, n)
+					w.sos.meta[node].dsize.Add(uint64(n))
 				}
 			}
 		}
@@ -262,27 +262,27 @@ func (w *Writer) start() {
 	// 	"disk", diskCount,
 	// 	"net", netCount,
 	// 	"fail", failCount,
-	// 	"nodes", w.dm.nodes,
+	// 	"nodes", w.sos.nodes,
 	// )
 
 	if mlock {
-		w.dm.mlock.Unlock()
+		w.sos.mlock.Unlock()
 	}
 
 	file.Sync()
 	file.Close()
 	if dlock {
-		w.dm.dlock.Unlock()
+		w.sos.dlock.Unlock()
 	}
 
 	nodes := []uint64{}
-	for k := range w.dm.meta {
+	for k := range w.sos.meta {
 		nodes = append(nodes, k)
 	}
 
 	for _, n := range nodes {
-		if w.dm.meta[n].writer != nil {
-			w.dm.meta[n].writer.CloseSend()
+		if w.sos.meta[n].writer != nil {
+			w.sos.meta[n].writer.CloseSend()
 		}
 	}
 }
@@ -291,36 +291,36 @@ type writerOptions struct {
 	LocalOnly bool
 }
 
-// Writer returns a writer object for writing data to DistMem. The
-// caller needs to call writer.Close() after use. Options is only
-// used internally, not exposed to callers.
-func (dm *DistMem) Writer(opts ...*writerOptions) (*Writer, error) {
-	if dm.on.Load() == 0 {
+// Writer returns a writer object for writing data to SoS. The
+// caller needs to call writer.Close() after use. Options is
+// only used internally, not exposed to callers.
+func (sos *SoS) Writer(opts ...*writerOptions) (*Writer, error) {
+	if sos.on.Load() == 0 {
 		return nil, errNoInit
 	}
 
-	dm.wmtx.Lock()
+	sos.wmtx.Lock()
 	var localOnly bool
 	if len(opts) > 0 {
 		localOnly = opts[0].LocalOnly
 	}
 
-	dm.writer = &Writer{
+	sos.writer = &Writer{
 		lo:   localOnly,
-		dm:   dm,
+		sos:  sos,
 		ch:   make(chan []byte),
 		done: make(chan struct{}, 1),
 	}
 
-	go dm.writer.start()
-	dm.wrefs.Add(1)
-	return dm.writer, nil
+	go sos.writer.start()
+	sos.wrefs.Add(1)
+	return sos.writer, nil
 }
 
 type Reader struct {
 	sync.Mutex
 	lo   bool // local read only
-	dm   *DistMem
+	sos  *SoS
 	on   atomic.Int32
 	err  error
 	done chan struct{}
@@ -332,12 +332,12 @@ func (r *Reader) Read(out chan []byte) {
 	eg.Go(func() error {
 		r.on.Store(1)
 		ctx := context.Background()
-		for _, node := range r.dm.nodes {
+		for _, node := range r.sos.nodes {
 			var err error
 			switch {
-			case !r.lo && node != r.dm.me():
+			case !r.lo && node != r.sos.me():
 				func() {
-					r.dm.meta[node].reader, err = r.dm.meta[node].client.DMemRead(ctx)
+					r.sos.meta[node].reader, err = r.sos.meta[node].client.SoSRead(ctx)
 					if err != nil {
 						r.Lock()
 						r.err = fmt.Errorf("DMemRead failed: %v", err)
@@ -346,12 +346,12 @@ func (r *Reader) Read(out chan []byte) {
 					}
 				}()
 
-				err = r.dm.meta[node].reader.Send(&pb.Payload{
+				err = r.sos.meta[node].reader.Send(&pb.Payload{
 					Meta: map[string]string{
-						metaName:      r.dm.Name,
-						metaMemLimit:  fmt.Sprintf("%v", r.dm.mlimit.Load()),
-						metaDiskLimit: fmt.Sprintf("%v", r.dm.dlimit.Load()),
-						metaExpire:    fmt.Sprintf("%v", int64(r.dm.age.Seconds())),
+						metaName:      r.sos.Name,
+						metaMemLimit:  fmt.Sprintf("%v", r.sos.mlimit.Load()),
+						metaDiskLimit: fmt.Sprintf("%v", r.sos.dlimit.Load()),
+						metaExpire:    fmt.Sprintf("%v", int64(r.sos.age.Seconds())),
 					},
 				})
 
@@ -363,7 +363,7 @@ func (r *Reader) Read(out chan []byte) {
 				}
 
 				for {
-					in, err := r.dm.meta[node].reader.Recv()
+					in, err := r.sos.meta[node].reader.Recv()
 					if err == io.EOF {
 						break
 					}
@@ -379,23 +379,23 @@ func (r *Reader) Read(out chan []byte) {
 				}
 			default:
 				func() {
-					r.dm.mlock.Lock()
-					defer r.dm.mlock.Unlock()
+					r.sos.mlock.Lock()
+					defer r.sos.mlock.Unlock()
 					var n int
-					for _, off := range r.dm.data[node].mlocs {
-						out <- r.dm.data[node].data[n : n+off]
+					for _, off := range r.sos.data[node].mlocs {
+						out <- r.sos.data[node].data[n : n+off]
 						n += off
 					}
 				}()
 
 				func() {
-					r.dm.dlock.Lock()
-					defer r.dm.dlock.Unlock()
-					if len(r.dm.dlocs) == 0 {
+					r.sos.dlock.Lock()
+					defer r.sos.dlock.Unlock()
+					if len(r.sos.dlocs) == 0 {
 						return
 					}
 
-					ra, err := mmap.Open(r.dm.localFile())
+					ra, err := mmap.Open(r.sos.localFile())
 					if err != nil {
 						r.Lock()
 						r.err = fmt.Errorf("Open failed: %v", err)
@@ -405,7 +405,7 @@ func (r *Reader) Read(out chan []byte) {
 
 					defer ra.Close()
 					var off int64
-					for _, loc := range r.dm.dlocs {
+					for _, loc := range r.sos.dlocs {
 						buf := make([]byte, loc)
 						n, err := ra.ReadAt(buf, off)
 						if err != nil {
@@ -443,7 +443,7 @@ func (r *Reader) Close() {
 	}
 
 	<-r.done // wait for loop()
-	r.dm.rrefs.Add(-1)
+	r.sos.rrefs.Add(-1)
 	r.on.Store(0)
 }
 
@@ -451,11 +451,11 @@ type readerOptions struct {
 	LocalOnly bool
 }
 
-// Reader returns a reader object for reading data from DistMem.
-// The caller needs to call reader.Close() after use. Options is
-// only used internally, not exposed to callers.
-func (dm *DistMem) Reader(opts ...*readerOptions) (*Reader, error) {
-	if dm.on.Load() == 0 {
+// Reader returns a reader object for reading data from SoS. The
+// caller needs to call reader.Close() after use. Options is only
+// used internally, not exposed to callers.
+func (sos *SoS) Reader(opts ...*readerOptions) (*Reader, error) {
+	if sos.on.Load() == 0 {
 		return nil, errNoInit
 	}
 
@@ -466,102 +466,102 @@ func (dm *DistMem) Reader(opts ...*readerOptions) (*Reader, error) {
 
 	reader := &Reader{
 		lo:   localOnly,
-		dm:   dm,
+		sos:  sos,
 		done: make(chan struct{}, 1),
 	}
 
-	dm.rrefs.Add(1)
+	sos.rrefs.Add(1)
 	return reader, nil
 }
 
-// Close closes the DistMem object.
-func (dm *DistMem) Close() {
-	if dm.on.Load() == 0 {
+// Close closes the SoS object.
+func (sos *SoS) Close() {
+	if sos.on.Load() == 0 {
 		return
 	}
 
-	dm.Lock()
-	defer dm.Unlock()
+	sos.Lock()
+	defer sos.Unlock()
 	nodes := []uint64{}
-	for k := range dm.meta {
+	for k := range sos.meta {
 		nodes = append(nodes, k)
 	}
 
 	ctx := context.Background()
 	for _, n := range nodes {
-		if dm.meta[n].conn != nil {
-			dm.meta[n].client.DMemClose(ctx, &pb.Payload{
-				Meta: map[string]string{metaName: dm.Name},
+		if sos.meta[n].conn != nil {
+			sos.meta[n].client.SoSClose(ctx, &pb.Payload{
+				Meta: map[string]string{metaName: sos.Name},
 			})
 		}
 	}
 
-	dm.on.Store(0)
+	sos.on.Store(0)
 }
 
-func (dm *DistMem) nextNode() (string, uint64) {
+func (sos *SoS) nextNode() (string, uint64) {
 	var mb string
-	members := dm.op.Members()
+	members := sos.op.Members()
 	for _, member := range members {
-		nn := dm.hasher.Sum64([]byte(member))
-		if nn == dm.me() {
+		nn := sos.hasher.Sum64([]byte(member))
+		if nn == sos.me() {
 			continue
 		}
 
-		if _, ok := dm.data[nn]; ok {
+		if _, ok := sos.data[nn]; ok {
 			continue
 		}
 
 		mb = member
-		dm.nodes = append(dm.nodes, nn)
-		dm.meta[nn] = &metaT{}
-		dm.data[nn] = &memT{data: []byte{}, mlocs: []int{}}
+		sos.nodes = append(sos.nodes, nn)
+		sos.meta[nn] = &metaT{}
+		sos.data[nn] = &memT{data: []byte{}, mlocs: []int{}}
 		break
 	}
 
-	return mb, dm.nodes[len(dm.nodes)-1]
+	return mb, sos.nodes[len(sos.nodes)-1]
 }
 
-func (dm *DistMem) me() uint64 { return dm.hasher.Sum64([]byte(dm.op.Name())) }
+func (sos *SoS) me() uint64 { return sos.hasher.Sum64([]byte(sos.op.Name())) }
 
-func (dm *DistMem) localFile() string {
-	name1 := fmt.Sprintf("%v", dm.me())
-	name2 := dm.hasher.Sum64([]byte(dm.Name))
+func (sos *SoS) localFile() string {
+	name1 := fmt.Sprintf("%v", sos.me())
+	name2 := sos.hasher.Sum64([]byte(sos.Name))
 	return fmt.Sprintf("%v_%v.dat", name1, name2)
 }
 
-func (dm *DistMem) cleaner() {
+func (sos *SoS) cleaner() {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
-		started := dm.start
+		started := sos.start
 		for {
 			time.Sleep(time.Second * 5)
-			wrefs := dm.wrefs.Load()
-			rrefs := dm.rrefs.Load()
+			wrefs := sos.wrefs.Load()
+			rrefs := sos.rrefs.Load()
 			if (wrefs + rrefs) > 0 {
 				started = time.Now()
 				continue
 			}
 
-			if time.Since(started) > dm.age {
+			if time.Since(started) > sos.age {
 				func() {
 					// Cleanup memory area:
-					dm.op.dms[dm.Name].mlock.Lock()
-					dm.op.dms[dm.Name].mlock.Unlock()
-					for _, node := range dm.op.dms[dm.Name].nodes {
-						dm.op.dms[dm.Name].data[node].data = []byte{}
+					sos.op.soss[sos.Name].mlock.Lock()
+					sos.op.soss[sos.Name].mlock.Unlock()
+					for _, node := range sos.op.soss[sos.Name].nodes {
+						sos.op.soss[sos.Name].data[node].data = []byte{}
 					}
 				}()
 
 				// Cleanup disk area:
-				dm.op.dms[dm.Name].dlock.Lock()
-				os.Remove(dm.localFile())
-				dm.op.dms[dm.Name].dlock.Unlock()
+				sos.op.soss[sos.Name].dlock.Lock()
+				os.Remove(sos.localFile())
+				sos.op.soss[sos.Name].dlock.Unlock()
 
 				// Remove the main map entry:
-				dm.op.dmsLock.Lock()
-				delete(dm.op.dms, dm.Name)
-				dm.op.dmsLock.Unlock()
+				sos.op.sosLock.Lock()
+				delete(sos.op.soss, sos.Name)
+				sos.op.sosLock.Unlock()
 				break
 			}
 		}
@@ -572,8 +572,8 @@ func (dm *DistMem) cleaner() {
 	eg.Wait()
 }
 
-func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
-	dm := &DistMem{
+func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
+	sos := &SoS{
 		Name:  name,
 		op:    op,
 		meta:  make(map[uint64]*metaT),
@@ -584,37 +584,37 @@ func newDistMem(name string, op *Op, opts ...*DistMemOptions) *DistMem {
 		wmtx:  &sync.Mutex{},
 	}
 
-	dm.on.Store(1)
-	dm.nodes = []uint64{dm.me()}
-	dm.meta[dm.me()] = &metaT{}
-	dm.data[dm.me()] = &memT{
+	sos.on.Store(1)
+	sos.nodes = []uint64{sos.me()}
+	sos.meta[sos.me()] = &metaT{}
+	sos.data[sos.me()] = &memT{
 		data:  []byte{},
 		mlocs: []int{},
 	}
 
 	if len(opts) > 0 {
-		dm.mlimit.Store(opts[0].MemLimit)
-		dm.dlimit.Store(opts[0].DiskLimit)
+		sos.mlimit.Store(opts[0].MemLimit)
+		sos.dlimit.Store(opts[0].DiskLimit)
 		if opts[0].Expiration > 0 {
-			dm.age = time.Second * time.Duration(opts[0].Expiration)
+			sos.age = time.Second * time.Duration(opts[0].Expiration)
 		}
 	}
 
-	if dm.mlimit.Load() == 0 {
+	if sos.mlimit.Load() == 0 {
 		si := syscall.Sysinfo_t{}
 		syscall.Sysinfo(&si)
-		dm.mlimit.Store(si.Freeram / 2) // half of free mem
+		sos.mlimit.Store(si.Freeram / 2) // half of free mem
 	}
 
-	if dm.dlimit.Load() == 0 {
-		dm.dlimit.Store(1 << 30) // 1GB by default
+	if sos.dlimit.Load() == 0 {
+		sos.dlimit.Store(1 << 30) // 1GB by default
 	}
 
-	if dm.age == 0 {
-		dm.age = time.Hour * 1
+	if sos.age == 0 {
+		sos.age = time.Hour * 1
 	}
 
-	dm.start = time.Now()
-	go dm.cleaner()
-	return dm
+	sos.start = time.Now()
+	go sos.cleaner()
+	return sos
 }

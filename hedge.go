@@ -219,8 +219,8 @@ type Op struct {
 	broadcastStreamIn  chan *StreamMessage
 	broadcastStreamOut chan *StreamMessage
 
-	dmsLock *sync.Mutex
-	dms     map[string]*DistMem // distributed memory
+	sosLock *sync.Mutex
+	soss    map[string]*SoS // distributed memory
 
 	*spindle.Lock                     // handles our distributed lock
 	members       map[string]struct{} // key=id
@@ -551,18 +551,19 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 	return &Semaphore{name, limit, op}, nil
 }
 
-// NewDistMem returns an object for writing data to distributed memory and
-// disk across the cluster. The order of writing is local memory, local
-// disk, other pod's memory, other pod's disk, etc.
-func (op *Op) NewDistMem(name string, opts ...*DistMemOptions) *DistMem {
-	op.dmsLock.Lock()
-	defer op.dmsLock.Unlock()
-	if _, ok := op.dms[name]; ok {
-		return op.dms[name]
+// NewSoS returns an object for writing data to spill-over
+// storage across the cluster. The order of writing is local
+// memory, local disk, other pod's memory, other pod's disk,
+// and so on.
+func (op *Op) NewSoS(name string, opts ...*SoSOptions) *SoS {
+	op.sosLock.Lock()
+	defer op.sosLock.Unlock()
+	if _, ok := op.soss[name]; ok {
+		return op.soss[name]
 	}
 
-	op.dms[name] = newDistMem(name, op, opts...)
-	return op.dms[name]
+	op.soss[name] = newSoS(name, op, opts...)
+	return op.soss[name]
 }
 
 // Get reads a key (or keys) from Op.
@@ -1321,8 +1322,8 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		members:       make(map[string]struct{}),
 		ensureCh:      make(chan string),
 		ensureDone:    make(chan struct{}, 1),
-		dmsLock:       &sync.Mutex{},
-		dms:           map[string]*DistMem{},
+		sosLock:       &sync.Mutex{},
+		soss:          map[string]*SoS{},
 		Lock:          &spindle.Lock{}, // init later
 	}
 

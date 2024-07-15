@@ -294,7 +294,7 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("/distmem", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sos", func(w http.ResponseWriter, r *http.Request) {
 		defer func(start time.Time) {
 			slog.Info("distmem:", "duration", time.Since(start))
 		}(time.Now())
@@ -309,14 +309,14 @@ func main() {
 		limit := 14_000 // 4 pods, all
 		// limit := 2_500
 
-		dm := func() *hedge.DistMem {
-			dm := op.NewDistMem(name, &hedge.DistMemOptions{
+		sos := func() *hedge.SoS {
+			sos := op.NewSoS(name, &hedge.SoSOptions{
 				MemLimit:   150_000,
 				DiskLimit:  120_000,
 				Expiration: 30,
 			})
 
-			writer, err := dm.Writer()
+			writer, err := sos.Writer()
 			if err != nil {
 				slog.Error("Writer failed:", "err", err)
 				return nil
@@ -331,16 +331,16 @@ func main() {
 			}
 
 			slog.Info("write_dm:", "i", limit, "n", n, "write_err", writer.Err())
-			return dm
+			return sos
 		}()
 
-		if dm == nil {
-			slog.Error("failed in creating DistMem object")
+		if sos == nil {
+			slog.Error("failed in creating SoS object")
 			return
 		}
 
 		func() {
-			reader, err := dm.Reader()
+			reader, err := sos.Reader()
 			if err != nil {
 				slog.Error(err.Error())
 				return
@@ -384,11 +384,11 @@ func main() {
 			slog.Info("read_dm:", "read_err", reader.Err())
 		}()
 
-		dm.Close()
+		sos.Close()
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("/dmlocal", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/soslocal", func(w http.ResponseWriter, r *http.Request) {
 		defer func(start time.Time) {
 			slog.Info("distmem:", "duration", time.Since(start))
 		}(time.Now())
@@ -419,13 +419,13 @@ func main() {
 
 		slog.Info("start distmem:", "name", name)
 
-		dm := func() *hedge.DistMem {
-			dm := op.NewDistMem(name, &hedge.DistMemOptions{
+		sos := func() *hedge.SoS {
+			sos := op.NewSoS(name, &hedge.SoSOptions{
 				MemLimit:   100_000,
 				Expiration: 30,
 			})
 
-			writer, err := dm.Writer()
+			writer, err := sos.Writer()
 			if err != nil {
 				slog.Error("Writer failed:", "err", err)
 				return nil
@@ -467,11 +467,11 @@ func main() {
 				"err", writer.Err(),
 			)
 
-			return dm
+			return sos
 		}()
 
 		func() {
-			reader, _ := dm.Reader()
+			reader, _ := sos.Reader()
 			out := make(chan []byte)
 			eg := new(errgroup.Group)
 			eg.Go(func() error {
@@ -503,7 +503,7 @@ func main() {
 			slog.Info("read_dm:", "read_err", reader.Err())
 		}()
 
-		dm.Close()
+		sos.Close()
 		w.Write([]byte("OK"))
 	})
 

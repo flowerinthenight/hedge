@@ -109,7 +109,7 @@ func (s *service) Broadcast(hs pb.Hedge_BroadcastServer) error {
 	return g.Wait()
 }
 
-func (s *service) DMemWrite(hs pb.Hedge_DMemWriteServer) error {
+func (s *service) SoSWrite(hs pb.Hedge_SoSWriteServer) error {
 	var err error
 	ctx := hs.Context()
 	var writer *Writer
@@ -136,11 +136,11 @@ loop:
 		}
 
 		name := in.Meta[metaName]
-		if _, ok := s.op.dms[name]; !ok {
+		if _, ok := s.op.soss[name]; !ok {
 			mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
 			dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
 			age, _ := strconv.ParseInt(in.Meta[metaExpire], 10, 64)
-			s.op.dms[name] = s.op.NewDistMem(name, &DistMemOptions{
+			s.op.soss[name] = s.op.NewSoS(name, &SoSOptions{
 				MemLimit:   mlimit,
 				DiskLimit:  dlimit,
 				Expiration: age,
@@ -148,7 +148,7 @@ loop:
 		}
 
 		if writer == nil {
-			writer, _ = s.op.dms[name].Writer(&writerOptions{
+			writer, _ = s.op.soss[name].Writer(&writerOptions{
 				LocalOnly: true,
 			})
 		}
@@ -164,7 +164,7 @@ loop:
 	return err
 }
 
-func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
+func (s *service) SoSRead(hs pb.Hedge_SoSReadServer) error {
 	var err error
 	in, err := hs.Recv()
 	if err == io.EOF {
@@ -177,18 +177,18 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	}
 
 	name := in.Meta[metaName]
-	if _, ok := s.op.dms[name]; !ok {
+	if _, ok := s.op.soss[name]; !ok {
 		mlimit, _ := strconv.ParseUint(in.Meta[metaMemLimit], 10, 64)
 		dlimit, _ := strconv.ParseUint(in.Meta[metaDiskLimit], 10, 64)
 		age, _ := strconv.ParseInt(in.Meta[metaExpire], 10, 64)
-		s.op.dms[name] = s.op.NewDistMem(name, &DistMemOptions{
+		s.op.soss[name] = s.op.NewSoS(name, &SoSOptions{
 			MemLimit:   mlimit,
 			DiskLimit:  dlimit,
 			Expiration: age,
 		})
 	}
 
-	reader, _ := s.op.dms[name].Reader(&readerOptions{LocalOnly: true})
+	reader, _ := s.op.soss[name].Reader(&readerOptions{LocalOnly: true})
 	out := make(chan []byte)
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
@@ -212,8 +212,8 @@ func (s *service) DMemRead(hs pb.Hedge_DMemReadServer) error {
 	return nil
 }
 
-func (s *service) DMemClose(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
+func (s *service) SoSClose(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
 	name := in.Meta[metaName]
-	s.op.dms[name].Close()
+	s.op.soss[name].Close()
 	return &pb.Payload{}, nil
 }
