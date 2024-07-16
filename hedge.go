@@ -18,7 +18,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	pb "github.com/flowerinthenight/hedge/proto/v1"
-	"github.com/flowerinthenight/spindle"
+	"github.com/flowerinthenight/spindle/v2"
 	"github.com/google/uuid"
 	gaxv2 "github.com/googleapis/gax-go/v2"
 	"github.com/hashicorp/memberlist"

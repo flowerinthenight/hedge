@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	pb "github.com/flowerinthenight/hedge/proto/v1"
 	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"
@@ -74,7 +75,6 @@ type SoS struct {
 	meta   map[uint64]*metaT // per-node metadata, key=node
 	mlimit atomic.Uint64     // mem limit
 	dlimit atomic.Uint64     // disk limit
-	hasher hashT             // for node id
 	data   map[uint64]*memT  // mem data , key=node
 	dlocs  []int             // disk offsets
 	mlock  *sync.Mutex       // local mem lock
@@ -504,7 +504,7 @@ func (sos *SoS) nextNode() (string, uint64) {
 	var mb string
 	members := sos.op.Members()
 	for _, member := range members {
-		nn := sos.hasher.Sum64([]byte(member))
+		nn := xxhash.Sum64String(member)
 		if nn == sos.me() {
 			continue
 		}
@@ -523,11 +523,11 @@ func (sos *SoS) nextNode() (string, uint64) {
 	return mb, sos.nodes[len(sos.nodes)-1]
 }
 
-func (sos *SoS) me() uint64 { return sos.hasher.Sum64([]byte(sos.op.Name())) }
+func (sos *SoS) me() uint64 { return xxhash.Sum64String(sos.op.Name()) }
 
 func (sos *SoS) localFile() string {
 	name1 := fmt.Sprintf("%v", sos.me())
-	name2 := sos.hasher.Sum64([]byte(sos.Name))
+	name2 := xxhash.Sum64String(sos.Name)
 	return fmt.Sprintf("%v_%v.dat", name1, name2)
 }
 
