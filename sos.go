@@ -58,8 +58,9 @@ type memT struct {
 }
 
 // SoS (Spillover-Store) represents an object for spill-over (or stitched)
-// storage. Useful only for load-process-discard types of data processing.
-// See limitation below.
+// storage. Useful for load-process-discard types of data processing. The
+// order of storage priority is local memory, local disk, other pod's
+// memory, other pod's disk, and so on.
 //
 // Limitation: At the moment, it's not allowed to reuse a name for SOS
 // once it's used and closed within hedge's lifetime.
