@@ -55,7 +55,8 @@ column=id, value=limit={num}
 ## How to use
 Something like:
 ```go
-client, _ := spanner.NewClient(context.Background(), "your/spanner/database")
+ctx := context.Background()
+client, _ := spanner.NewClient(ctx, "your/spanner/database")
 defer client.Close()
 
 op := hedge.New(
@@ -80,7 +81,7 @@ op := hedge.New(
     ),
 })
 
-ctx, cancel := context.WithCancel(context.Background())
+ctx, cancel := context.WithCancel(ctx)
 done := make(chan error, 1) // optional wait
 go op.Run(ctx, done)
 
