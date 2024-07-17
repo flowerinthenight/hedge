@@ -28,7 +28,7 @@ An experimental spill-over store (**SoS**) is also supported. It's currently use
 Finally, a distributed semaphore is also provided through the `NewSemaphore()`, `[Try]Acquire()`, and `Release()` APIs.
 
 ## Prerequisites
-* All pods within the group should be able to contact each other via TCP (address:port).
+* All pods within a cluster should be able to contact each other via TCP (address:port).
 * Each hedge's instance id should be set using the pod's cluster IP address:port. You can use [downward API](https://kubernetes.io/docs/concepts/workloads/pods/downward-api/) to get the pod's IP address, or you can use the ":port" format in which case the IP address will be resolved internally.
 * For now, spindle's lock table and hedge's log table are within the same database.
 * Tables for spindle and hedge need to be created beforehand. See [here](https://github.com/flowerinthenight/spindle#usage) for spindle's DDL. For hedge, see below:
