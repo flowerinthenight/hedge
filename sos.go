@@ -398,12 +398,16 @@ func (r *Reader) Read(out chan []byte) {
 				func() {
 					r.sos.mlock.Lock()
 					defer r.sos.mlock.Unlock()
-					if _, ok := r.sos.data[node]; ok {
-						if r.sos.data[node].bufs != nil {
-							for i := 0; i < r.sos.data[node].bufs.Len(); i++ {
-								out <- r.sos.data[node].bufs.Value(i)
-							}
-						}
+					if _, ok := r.sos.data[node]; !ok {
+						return
+					}
+
+					if r.sos.data[node].bufs == nil {
+						return
+					}
+
+					for i := 0; i < r.sos.data[node].bufs.Len(); i++ {
+						out <- r.sos.data[node].bufs.Value(i)
 					}
 				}()
 
