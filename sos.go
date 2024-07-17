@@ -183,7 +183,7 @@ func (w *Writer) start() {
 					w.sos.meta[node].client = pb.NewHedgeClient(w.sos.meta[node].conn)
 					w.sos.meta[node].writer, err = w.sos.meta[node].client.SoSWrite(ctx)
 					if err != nil {
-						return fmt.Errorf("DMemWrite (%v) failed: %w", nextName, err)
+						return fmt.Errorf("SoSWrite (%v) failed: %w", nextName, err)
 					}
 
 					w.sos.meta[node].grpc.Add(1)
@@ -357,7 +357,7 @@ func (r *Reader) Read(out chan []byte) {
 					r.sos.meta[node].reader, err = r.sos.meta[node].client.SoSRead(ctx)
 					if err != nil {
 						r.Lock()
-						r.err = fmt.Errorf("DMemRead failed: %v", err)
+						r.err = fmt.Errorf("SoSRead failed: %v", err)
 						r.Unlock()
 						return
 					}

@@ -114,8 +114,6 @@ func (s *service) SoSWrite(hs pb.Hedge_SoSWriteServer) error {
 	ctx := hs.Context()
 	var writer *Writer
 
-	var count int
-
 loop:
 	for {
 		select {
@@ -154,7 +152,6 @@ loop:
 		}
 
 		writer.Write(in.Data)
-		count++
 	}
 
 	if writer != nil {
