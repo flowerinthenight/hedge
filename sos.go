@@ -127,7 +127,6 @@ func (w *Writer) Close() {
 }
 
 func (w *Writer) start() {
-
 	defer func() { w.done <- struct{}{} }()
 	w.on.Store(1)
 	ctx := context.Background()
