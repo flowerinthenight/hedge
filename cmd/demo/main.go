@@ -202,7 +202,7 @@ func main() {
 		}
 
 		log.Printf("sending %q msg to leader...", msg)
-		v, err := op.Send(context.Background(), []byte(msg))
+		v, err := hedge.SendToLeader(context.Background(), op, []byte(msg))
 		if err != nil {
 			w.Write([]byte(err.Error()))
 			return
@@ -435,6 +435,7 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
+	// NOTE: Used only on my local environment.
 	mux.HandleFunc("/soslocal", func(w http.ResponseWriter, r *http.Request) {
 		defer func(start time.Time) {
 			slog.Info("distmem:", "duration", time.Since(start))
