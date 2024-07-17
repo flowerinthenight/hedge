@@ -96,7 +96,7 @@ go op.Run(ctx, done)
 //
 // To send a message to the current leader, any pod can call op.Send(...) and
 // the leader will handle it through the WithLeaderHandler callback. A wrapper
-// SendToLeader() helper function is also avaible for calling op.Send() with
+// SendToLeader() helper function is also available for calling op.Send() with
 // retries+backoff.
 //
 // For broadcast, any pod can call op.Broadcast(...) here which will be handled
