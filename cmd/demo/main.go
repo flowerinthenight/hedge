@@ -339,6 +339,53 @@ func main() {
 			return
 		}
 
+		// reader_1
+		func() {
+			reader, err := sos.Reader()
+			if err != nil {
+				slog.Error(err.Error())
+				return
+			}
+
+			out := make(chan []byte)
+			eg := new(errgroup.Group)
+			eg.Go(func() error {
+				var i, n, total int
+				for d := range out {
+					ss := strings.Split(string(d), "_")
+					if len(ss) != 3 {
+						slog.Error("bad fmt:", "len", len(ss))
+						continue
+					}
+
+					t, err := strconv.Atoi(ss[0])
+					if err != nil {
+						slog.Error("Atoi failed:", "err", err)
+						continue
+					}
+
+					total += t
+					_, err = time.Parse(time.RFC3339, ss[2])
+					if err != nil {
+						slog.Error("Parse failed:", "err", err)
+						continue
+					}
+
+					n += len(d)
+					i++
+				}
+
+				slog.Info("read_dm:", "i", i, "n", n, "total", total)
+				return nil
+			})
+
+			reader.Read(out)
+			eg.Wait()
+			reader.Close()
+			slog.Info("read_dm:", "read_err", reader.Err())
+		}()
+
+		// reader_2
 		func() {
 			reader, err := sos.Reader()
 			if err != nil {

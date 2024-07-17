@@ -4,12 +4,14 @@ go 1.21
 
 require (
 	cloud.google.com/go/spanner v1.64.0
+	github.com/apache/arrow/go/v17 v17.0.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/flowerinthenight/spindle/v2 v2.0.2
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.12.5
 	github.com/hashicorp/memberlist v0.5.1
-	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91
+	github.com/shirou/gopsutil/v4 v4.24.6
+	golang.org/x/exp v0.0.0-20240222234643-814bf88cf225
 	golang.org/x/sync v0.7.0
 	google.golang.org/api v0.187.0
 	google.golang.org/grpc v1.65.0
@@ -31,9 +33,12 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/goccy/go-json v0.10.3 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -43,8 +48,15 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.6 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
+	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/miekg/dns v1.1.61 // indirect
+	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
+	github.com/tklauser/go-sysconf v0.3.12 // indirect
+	github.com/tklauser/numcpus v0.6.1 // indirect
+	github.com/yusufpapurcu/wmi v1.2.4 // indirect
+	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.53.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0 // indirect

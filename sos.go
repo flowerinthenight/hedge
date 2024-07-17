@@ -9,11 +9,14 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
+	"github.com/apache/arrow/go/v17/arrow"
+	"github.com/apache/arrow/go/v17/arrow/array"
+	"github.com/apache/arrow/go/v17/arrow/memory"
 	"github.com/cespare/xxhash/v2"
 	pb "github.com/flowerinthenight/hedge/proto/v1"
+	"github.com/shirou/gopsutil/v4/mem"
 	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -54,8 +57,9 @@ type SoSOptions struct {
 }
 
 type memT struct {
-	data  []byte
-	mlocs []int
+	mem  *memory.GoAllocator
+	bb   *array.BinaryBuilder
+	bufs *array.Binary
 }
 
 // SoS (Spillover-Store) represents an object for spill-over (or stitched)
@@ -123,6 +127,7 @@ func (w *Writer) Close() {
 }
 
 func (w *Writer) start() {
+
 	defer func() { w.done <- struct{}{} }()
 	w.on.Store(1)
 	ctx := context.Background()
@@ -137,6 +142,11 @@ func (w *Writer) start() {
 
 	var mlock bool
 	var dlock bool
+	unlock := func(b bool, l *sync.Mutex) {
+		if b {
+			l.Unlock()
+		}
+	}
 
 	for data := range w.ch {
 		allCount++
@@ -218,14 +228,18 @@ func (w *Writer) start() {
 				}
 
 				if _, ok := w.sos.data[node]; !ok {
-					w.sos.data[node] = &memT{
-						data:  []byte{},
-						mlocs: []int{},
-					}
+					w.sos.data[node] = &memT{}
 				}
 
-				w.sos.data[node].data = append(w.sos.data[node].data, data...)
-				w.sos.data[node].mlocs = append(w.sos.data[node].mlocs, len(data))
+				if w.sos.data[node].bb == nil {
+					w.sos.data[node].mem = memory.NewGoAllocator()
+					w.sos.data[node].bb = array.NewBinaryBuilder(
+						w.sos.data[node].mem,
+						&arrow.BinaryType{},
+					)
+				}
+
+				w.sos.data[node].bb.Append(data)
 				w.sos.meta[node].msize.Add(uint64(len(data)))
 			} else {
 				diskCount++
@@ -266,20 +280,23 @@ func (w *Writer) start() {
 	// 	"nodes", w.sos.nodes,
 	// )
 
-	if mlock {
-		w.sos.mlock.Unlock()
-	}
-
-	file.Sync()
-	file.Close()
-	if dlock {
-		w.sos.dlock.Unlock()
-	}
-
 	nodes := []uint64{}
 	for k := range w.sos.meta {
 		nodes = append(nodes, k)
 	}
+
+	for _, n := range nodes {
+		if w.sos.data[n].bb != nil {
+			w.sos.data[n].bufs = w.sos.data[n].bb.NewBinaryArray()
+			w.sos.data[n].bb.Release()
+		}
+	}
+
+	unlock(mlock, w.sos.mlock)
+
+	file.Sync()
+	file.Close()
+	unlock(dlock, w.sos.dlock)
 
 	for _, n := range nodes {
 		if w.sos.meta[n].writer != nil {
@@ -382,10 +399,12 @@ func (r *Reader) Read(out chan []byte) {
 				func() {
 					r.sos.mlock.Lock()
 					defer r.sos.mlock.Unlock()
-					var n int
-					for _, off := range r.sos.data[node].mlocs {
-						out <- r.sos.data[node].data[n : n+off]
-						n += off
+					if _, ok := r.sos.data[node]; ok {
+						if r.sos.data[node].bufs != nil {
+							for i := 0; i < r.sos.data[node].bufs.Len(); i++ {
+								out <- r.sos.data[node].bufs.Value(i)
+							}
+						}
 					}
 				}()
 
@@ -516,7 +535,7 @@ func (sos *SoS) nextNode() (string, uint64) {
 		mb = member
 		sos.nodes = append(sos.nodes, nn)
 		sos.meta[nn] = &metaT{}
-		sos.data[nn] = &memT{data: []byte{}, mlocs: []int{}}
+		sos.data[nn] = &memT{}
 		break
 	}
 
@@ -548,9 +567,12 @@ func (sos *SoS) cleaner() {
 				func() {
 					// Cleanup memory area:
 					sos.op.soss[sos.Name].mlock.Lock()
-					sos.op.soss[sos.Name].mlock.Unlock()
+					defer sos.op.soss[sos.Name].mlock.Unlock()
 					for _, node := range sos.op.soss[sos.Name].nodes {
-						sos.op.soss[sos.Name].data[node].data = []byte{}
+						if sos.data[node].bufs != nil {
+							sos.data[node].bufs.Release()
+							// slog.Info("arrow: release:", "node", node)
+						}
 					}
 				}()
 
@@ -588,10 +610,7 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 	sos.on.Store(1)
 	sos.nodes = []uint64{sos.me()}
 	sos.meta[sos.me()] = &metaT{}
-	sos.data[sos.me()] = &memT{
-		data:  []byte{},
-		mlocs: []int{},
-	}
+	sos.data[sos.me()] = &memT{}
 
 	if len(opts) > 0 {
 		sos.mlimit.Store(opts[0].MemLimit)
@@ -602,9 +621,8 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 	}
 
 	if sos.mlimit.Load() == 0 {
-		si := syscall.Sysinfo_t{}
-		syscall.Sysinfo(&si)
-		sos.mlimit.Store(si.Freeram / 2) // half of free mem
+		vm, _ := mem.VirtualMemory()
+		sos.mlimit.Store(vm.Available / 2) // half of free mem
 	}
 
 	if sos.dlimit.Load() == 0 {
