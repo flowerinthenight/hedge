@@ -1417,7 +1417,7 @@ func SendToLeader(ctx context.Context, op *Op, m []byte, args ...*SendToLeaderAr
 
 		var i int
 		for {
-			if i >= retries {
+			if i >= retries && retries >= 0 {
 				break
 			}
 
@@ -1425,14 +1425,14 @@ func SendToLeader(ctx context.Context, op *Op, m []byte, args ...*SendToLeaderAr
 				time.Sleep(bo.Pause())
 			}
 
-			if retries > -1 {
+			if retries >= 0 {
 				i++
 			}
 		}
 
 		i = 0
 		for {
-			if i >= retries {
+			if i >= retries && retries >= 0 {
 				err = fmt.Errorf("hedge: retries exhausted")
 				return
 			}
@@ -1446,7 +1446,7 @@ func SendToLeader(ctx context.Context, op *Op, m []byte, args ...*SendToLeaderAr
 				return
 			}
 
-			if retries > -1 {
+			if retries >= 0 {
 				i++
 			}
 		}
