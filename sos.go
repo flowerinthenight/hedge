@@ -85,6 +85,7 @@ type SoS struct {
 	dlock  *sync.Mutex       // local file lock
 	wmtx   *sync.Mutex       // one active writer only
 	writer *Writer           // writer object
+	refs   atomic.Int64      // self reference count
 	wrefs  atomic.Int64      // writer reference count
 	rrefs  atomic.Int64      // reader reference count
 	on     atomic.Int32
@@ -288,6 +289,8 @@ func (w *Writer) start() {
 		if w.sos.data[n].bb != nil {
 			w.sos.data[n].bufs = w.sos.data[n].bb.NewBinaryArray()
 			w.sos.data[n].bb.Release()
+			w.sos.data[n].bb = nil
+			// slog.Info("arrow: release(bb):", "node", n)
 		}
 	}
 
@@ -519,6 +522,7 @@ func (sos *SoS) Close() {
 		}
 	}
 
+	sos.refs.Add(-1)
 	sos.on.Store(0)
 }
 
@@ -558,10 +562,11 @@ func (sos *SoS) cleaner() {
 	eg.Go(func() error {
 		started := sos.start
 		for {
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Second * 1)
+			refs := sos.refs.Load()
 			wrefs := sos.wrefs.Load()
 			rrefs := sos.rrefs.Load()
-			if (wrefs + rrefs) > 0 {
+			if (refs + wrefs + rrefs) > 0 {
 				started = time.Now()
 				continue
 			}
@@ -574,7 +579,8 @@ func (sos *SoS) cleaner() {
 					for _, node := range sos.op.soss[sos.Name].nodes {
 						if sos.data[node].bufs != nil {
 							sos.data[node].bufs.Release()
-							// slog.Info("arrow: release:", "node", node)
+							sos.data[node].bufs = nil
+							// slog.Info("arrow: release(buf):", "node", node)
 						}
 					}
 				}()
@@ -636,6 +642,7 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 		sos.age = time.Hour * 1
 	}
 
+	sos.refs.Add(1)
 	sos.start = time.Now()
 	go sos.cleaner()
 	return sos

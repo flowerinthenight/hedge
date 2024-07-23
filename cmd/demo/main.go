@@ -313,7 +313,7 @@ func main() {
 			sos := op.NewSoS(name, &hedge.SoSOptions{
 				MemLimit:   150_000,
 				DiskLimit:  120_000,
-				Expiration: 30,
+				Expiration: 5,
 			})
 
 			writer, err := sos.Writer()
@@ -448,9 +448,11 @@ func main() {
 			Usage         float64 `json:"usage"`
 		}
 
+		// See $HOME/tmp/
 		locs, _ := os.ReadFile("readlocs")
 		ss := strings.Split(string(locs), " ")
 
+		// See $HOME/tmp/
 		ra, err := mmap.Open("readdata")
 		if err != nil {
 			slog.Error(err.Error())
@@ -469,8 +471,9 @@ func main() {
 
 		sos := func() *hedge.SoS {
 			sos := op.NewSoS(name, &hedge.SoSOptions{
-				MemLimit:   100_000,
-				Expiration: 30,
+				MemLimit:   10_000_000,
+				DiskLimit:  10_000_000,
+				Expiration: 5,
 			})
 
 			writer, err := sos.Writer()
@@ -511,6 +514,7 @@ func main() {
 
 			writer.Close()
 			slog.Info("total_write:",
+				"count", i,
 				"val", wt,
 				"err", writer.Err(),
 			)
@@ -541,7 +545,7 @@ func main() {
 					rt += len(d)
 				}
 
-				slog.Info("total_read:", "val", rt)
+				slog.Info("total_read:", "count", i, "val", rt)
 				return nil
 			})
 
