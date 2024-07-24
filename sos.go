@@ -52,7 +52,7 @@ type SoSOptions struct {
 	DiskLimit uint64
 
 	// Expiration sets the TTL (time-to-live) of the backing storage.
-	// If not set, the default is 1hr.
+	// If not set, the default is 30s.
 	Expiration int64
 }
 
@@ -88,10 +88,10 @@ type SoS struct {
 	refs   atomic.Int64      // self reference count
 	wrefs  atomic.Int64      // writer reference count
 	rrefs  atomic.Int64      // reader reference count
-	on     atomic.Int32
+	on     atomic.Int32      // 1 = active
 
-	age   time.Duration
-	start time.Time
+	ttl time.Duration // ttl to cleanup
+	age time.Time     // started
 }
 
 type Writer struct {
@@ -207,7 +207,7 @@ func (w *Writer) start() {
 					metaName:      w.sos.Name,
 					metaMemLimit:  fmt.Sprintf("%v", w.sos.mlimit.Load()),
 					metaDiskLimit: fmt.Sprintf("%v", w.sos.dlimit.Load()),
-					metaExpire:    fmt.Sprintf("%v", int64(w.sos.age.Seconds())),
+					metaExpire:    fmt.Sprintf("%v", int64(w.sos.ttl.Seconds())),
 				},
 				Data: data,
 			})
@@ -371,7 +371,7 @@ func (r *Reader) Read(out chan []byte) {
 						metaName:      r.sos.Name,
 						metaMemLimit:  fmt.Sprintf("%v", r.sos.mlimit.Load()),
 						metaDiskLimit: fmt.Sprintf("%v", r.sos.dlimit.Load()),
-						metaExpire:    fmt.Sprintf("%v", int64(r.sos.age.Seconds())),
+						metaExpire:    fmt.Sprintf("%v", int64(r.sos.ttl.Seconds())),
 					},
 				})
 
@@ -560,7 +560,7 @@ func (sos *SoS) localFile() string {
 func (sos *SoS) cleaner() {
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
-		started := sos.start
+		started := sos.age
 		for {
 			time.Sleep(time.Second * 1)
 			refs := sos.refs.Load()
@@ -571,7 +571,7 @@ func (sos *SoS) cleaner() {
 				continue
 			}
 
-			if time.Since(started) > sos.age {
+			if time.Since(started) > sos.ttl {
 				func() {
 					// Cleanup memory area:
 					sos.op.soss[sos.Name].mlock.Lock()
@@ -625,7 +625,7 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 		sos.mlimit.Store(opts[0].MemLimit)
 		sos.dlimit.Store(opts[0].DiskLimit)
 		if opts[0].Expiration > 0 {
-			sos.age = time.Second * time.Duration(opts[0].Expiration)
+			sos.ttl = time.Second * time.Duration(opts[0].Expiration)
 		}
 	}
 
@@ -638,12 +638,12 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 		sos.dlimit.Store(1 << 30) // 1GB by default
 	}
 
-	if sos.age == 0 {
-		sos.age = time.Hour * 1
+	if sos.ttl == 0 {
+		sos.ttl = time.Second * 30
 	}
 
 	sos.refs.Add(1)
-	sos.start = time.Now()
+	sos.age = time.Now()
 	go sos.cleaner()
 	return sos
 }
