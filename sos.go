@@ -468,7 +468,7 @@ func (r *Reader) Close() {
 		return
 	}
 
-	<-r.done // wait for loop()
+	<-r.done // wait for loop
 	r.sos.rrefs.Add(-1)
 	r.on.Store(0)
 }
