@@ -48,7 +48,7 @@ type SoSOptions struct {
 	// MemLimit sets the memory limit in bytes to be used per node.
 	MemLimit uint64
 
-	//  DiskLimit sets the disk limit in bytes to be used per node.
+	// DiskLimit sets the disk limit in bytes to be used per node.
 	DiskLimit uint64
 
 	// Expiration sets the TTL (time-to-live) of the backing storage.
