@@ -2,6 +2,8 @@
 [![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/hedgedemo/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/hedgedemo)
 [![Go Reference](https://pkg.go.dev/badge/github.com/flowerinthenight/hedge.svg)](https://pkg.go.dev/github.com/flowerinthenight/hedge)
 
+(This repo is mirrored to [https://codeberg.org/flowerinthenight/hedge](https://codeberg.org/flowerinthenight/hedge)).
+
 ## hedge
 A library built on top of [spindle](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Features include a consistent, append-only, Spanner-backed distributed key/value storage, a distributed locking/leader election mechanism through spindle, a simple member-to-leader communication channel, a broadcast (send-to-all) mechanism, memory spill-over, and a distributed semaphore. It also works even on single-pod deployments.
 
