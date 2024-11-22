@@ -291,17 +291,25 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		return err
 	}
 
+	var exitedTCP atomic.Int32
+	doneTCP := make(chan error, 1)
+
+	// This connection will be closed upon context termination.
 	tl, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	defer tl.Close()
 	op.logger.Printf("tcp: listen on %v", op.hostPort)
 
 	go func() {
+		defer func() { doneTCP <- nil }()
 		for {
 			conn, err := tl.Accept()
+			if exitedTCP.Load() == 1 {
+				return
+			}
+
 			if err != nil {
 				op.logger.Printf("Accept failed: %v", err)
 				return
@@ -498,6 +506,9 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	defer op.active.Store(0)
 
 	<-ctx.Done() // wait for termination
+
+	exitedTCP.Store(1) // don't print err in tl.Accept
+	tl.Close()         // will cause tl.Accept to fail
 
 	gs.GracefulStop() // stop grpc server
 	if op.ensureOn.Load() == 1 {
