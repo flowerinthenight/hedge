@@ -363,7 +363,12 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName),
 		spindle.WithDuration(op.lockTimeout),
 		spindle.WithId(op.hostPort),
-		spindle.WithLeaderCallback(op.cbLeaderData, op.cbLeader),
+		spindle.WithLeaderCallback(op.cbLeaderData, func(data interface{}, msg []byte) {
+			if op.cbLeader != nil {
+				m := fmt.Sprintf("%v %v", string(msg), op.Name())
+				op.cbLeader(data, []byte(m))
+			}
+		}),
 		spindle.WithLogger(op.logger),
 	)
 
