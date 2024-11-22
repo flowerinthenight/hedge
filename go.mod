@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/spanner v1.73.0
 	github.com/apache/arrow/go/v17 v17.0.0
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/flowerinthenight/spindle/v2 v2.0.5
+	github.com/flowerinthenight/spindle/v2 v2.1.0
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.14.0
 	github.com/hashicorp/memberlist v0.5.1

@@ -703,8 +703,8 @@ github.com/envoyproxy/protoc-gen-validate v1.1.0 h1:tntQDh69XqOCOZsDz0lVJQez/2L6
 github.com/envoyproxy/protoc-gen-validate v1.1.0/go.mod h1:sXRDRVmzEbkM7CVcM06s9shE/m23dg3wzjl0UWqJ2q4=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
-github.com/flowerinthenight/spindle/v2 v2.0.5 h1:okUvE230pvj4qQlak1wVaBOBPURBSO2LN0KXs2xH71g=
-github.com/flowerinthenight/spindle/v2 v2.0.5/go.mod h1:Aqq145TsdqGeYeOCCoFtbPCJkpzbZvp69Ix62FtzVK0=
+github.com/flowerinthenight/spindle/v2 v2.1.0 h1:rfUe9WBD8o9IZ08PzC09UUBi+wUkAi29Y4Iof+kP4ts=
+github.com/flowerinthenight/spindle/v2 v2.1.0/go.mod h1:Aqq145TsdqGeYeOCCoFtbPCJkpzbZvp69Ix62FtzVK0=
 github.com/fogleman/gg v1.2.1-0.20190220221249-0403632d5b90/go.mod h1:R/bRT+9gY/C5z7JzPU0zXsXHKM4/ayA+zqcVNZzPa1k=
 github.com/fogleman/gg v1.3.0/go.mod h1:R/bRT+9gY/C5z7JzPU0zXsXHKM4/ayA+zqcVNZzPa1k=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
