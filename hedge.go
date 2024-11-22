@@ -81,8 +81,8 @@ type withDuration int64
 
 func (w withDuration) Apply(op *Op) { op.lockTimeout = int64(w) }
 
-// WithDuration sets Op's internal spindle object's lease duration.
-// Defaults to 30s when not set. Minimum value is 2s.
+// WithDuration sets Op's internal spindle object's lease duration in milliseconds.
+// Defaults to 30000ms (30s) when not set. Minimum value is 2000ms (2s).
 func WithDuration(v int64) Option { return withDuration(v) }
 
 type withGroupSyncInterval time.Duration
@@ -141,15 +141,6 @@ func WithBroadcastHandler(d interface{}, h FnMsgHandler) Option {
 	return withBroadcastHandler{d, h}
 }
 
-type withLogger struct{ l *log.Logger }
-
-func (w withLogger) Apply(op *Op) { op.logger = w.l }
-
-// WithLogger sets Op's logger object. Can be silenced by setting v to:
-//
-//	log.New(ioutil.Discard, "", 0)
-func WithLogger(v *log.Logger) Option { return withLogger{v} }
-
 type withGrpcHostPort string
 
 func (w withGrpcHostPort) Apply(op *Op) { op.grpcHostPort = string(w) }
@@ -200,6 +191,15 @@ func (w withBroadcastStreamChannels) Apply(op *Op) {
 func WithBroadcastStreamChannels(in chan *StreamMessage, out chan *StreamMessage) Option {
 	return withBroadcastStreamChannels{in, out}
 }
+
+type withLogger struct{ l *log.Logger }
+
+func (w withLogger) Apply(op *Op) { op.logger = w.l }
+
+// WithLogger sets Op's logger object. Can be silenced by setting v to:
+//
+//	log.New(ioutil.Discard, "", 0)
+func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
 // Op is our main instance for hedge operations.
 type Op struct {
