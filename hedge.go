@@ -93,6 +93,22 @@ func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w
 // within the group in seconds. If not set, defaults to 30s. Minimum value is 2s.
 func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
 
+type withLeaderCallback struct {
+	d interface{}
+	f spindle.FnLeaderCallback
+}
+
+func (w withLeaderCallback) Apply(op *Op) {
+	op.cbLeaderData = w.d
+	op.cbLeader = w.f
+}
+
+// WithLeaderCallback sets the node's callback function when it a leader is
+// selected (or deselected). The msg arg for h will be set to either 0 or 1.
+func WithLeaderCallback(d interface{}, f spindle.FnLeaderCallback) Option {
+	return withLeaderCallback{d, f}
+}
+
 type withLeaderHandler struct {
 	d interface{}
 	h FnMsgHandler
@@ -211,6 +227,8 @@ type Op struct {
 	lockTimeout   int64           // spindle's lock lease duration in ms
 	logTable      string          // append-only log table
 
+	cbLeader           spindle.FnLeaderCallback
+	cbLeaderData       interface{}
 	fnLeader           FnMsgHandler // leader message handler
 	fnLdrData          interface{}  // arbitrary data passed to fnLeader
 	fnBroadcast        FnMsgHandler // broadcast message handler
@@ -345,6 +363,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName),
 		spindle.WithDuration(op.lockTimeout),
 		spindle.WithId(op.hostPort),
+		spindle.WithLeaderCallback(op.cbLeaderData, op.cbLeader),
 		spindle.WithLogger(op.logger),
 	)
 
