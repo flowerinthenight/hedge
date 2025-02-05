@@ -15,7 +15,7 @@ import (
 	"github.com/apache/arrow/go/v17/arrow/array"
 	"github.com/apache/arrow/go/v17/arrow/memory"
 	"github.com/cespare/xxhash/v2"
-	pb "github.com/flowerinthenight/hedge/proto/v1"
+	pb "github.com/flowerinthenight/hedge-proto"
 	"github.com/shirou/gopsutil/v4/mem"
 	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"

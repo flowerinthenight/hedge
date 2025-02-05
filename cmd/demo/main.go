@@ -19,7 +19,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/flowerinthenight/hedge"
-	pb "github.com/flowerinthenight/hedge/proto/v1"
+	pb "github.com/flowerinthenight/hedge-proto"
 	"github.com/google/uuid"
 	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"

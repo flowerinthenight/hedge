@@ -1,13 +1,12 @@
 module github.com/flowerinthenight/hedge
 
-go 1.22.7
-
-toolchain go1.23.2
+go 1.23.6
 
 require (
 	cloud.google.com/go/spanner v1.74.0
 	github.com/apache/arrow/go/v17 v17.0.0
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/flowerinthenight/hedge-proto v0.1.0
 	github.com/flowerinthenight/spindle/v2 v2.2.0
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.14.1
@@ -17,7 +16,6 @@ require (
 	golang.org/x/sync v0.10.0
 	google.golang.org/api v0.219.0
 	google.golang.org/grpc v1.70.0
-	google.golang.org/protobuf v1.36.4
 )
 
 require (
@@ -85,4 +83,5 @@ require (
 	google.golang.org/genproto v0.0.0-20250127172529-29210b9bc287 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250127172529-29210b9bc287 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287 // indirect
+	google.golang.org/protobuf v1.36.4 // indirect
 )
