@@ -13,6 +13,10 @@ A [Go](https://go.dev/) library built on top of [spindle](https://github.com/flo
 
 At the moment, **hedge** is heavily used in [Alphaus](https://www.alphaus.cloud/) production with services that scale from single digit pods to hundreds.
 
+Ports:
+
+* [hedge-cb](https://github.com/flowerinthenight/hedge-cb) - AWS-native, relies on [spindle-cb](https://github.com/flowerinthenight/spindle-cb)
+
 ## Why?
 First, I wanted a cluster coordinator that can work within k8s Deployments as a library, not as an external service (like [ZooKeeper](https://zookeeper.apache.org/), or [etcd](https://etcd.io/)). So far, our efforts in making [Raft](https://raft.github.io/) play well with bursty, frequently scaling up/down deployments as a library is not that reliable yet (though we have an ongoing multi-[Paxos](https://en.wikipedia.org/wiki/Paxos_(computer_science))-based experiment [here](https://github.com/alphauslabs/juno) as well). I also wanted an easily-accessible storage that is a bit decoupled from the code (easier to query, edit, debug, backup, etc). We are already a heavy Spanner user, and spindle has been in our production for many years now: these two should be able to do it; StatefulSets or DaemonSets shouldn't be a requirement. Since then, additional features have been added, such as the `Send()` API.
 
