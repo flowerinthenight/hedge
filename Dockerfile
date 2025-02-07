@@ -1,4 +1,4 @@
-FROM golang:1.22.5-bookworm
+FROM golang:1.23.6-bookworm
 COPY . /go/src/github.com/flowerinthenight/hedge/
 WORKDIR /go/src/github.com/flowerinthenight/hedge/example/demo/
 RUN CGO_ENABLED=0 GOOS=linux go build -v -trimpath -installsuffix cgo -o hedge .
