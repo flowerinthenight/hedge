@@ -15,6 +15,6 @@
 # vendor/
 
 deployment.yaml
-cmd/demo/demo
+example/demo/demo
 readdata
 readlocs
