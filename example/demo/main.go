@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner"
-	"github.com/flowerinthenight/hedge"
 	pb "github.com/flowerinthenight/hedge-proto"
+	"github.com/flowerinthenight/hedge/v2"
 	"github.com/google/uuid"
 	"golang.org/x/exp/mmap"
 	"golang.org/x/sync/errgroup"

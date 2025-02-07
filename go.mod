@@ -1,4 +1,4 @@
-module github.com/flowerinthenight/hedge
+module github.com/flowerinthenight/hedge/v2
 
 go 1.23.6
 
