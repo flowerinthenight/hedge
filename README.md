@@ -5,7 +5,7 @@
 (This repo is mirrored to [https://codeberg.org/flowerinthenight/hedge](https://codeberg.org/flowerinthenight/hedge)).
 
 ## hedge
-A [Go](https://go.dev/) cluster membership management library built on top of [spindle](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Features include:
+A [Go](https://go.dev/) cluster membership management library built on [spindle](https://github.com/flowerinthenight/spindle) and [Cloud Spanner](https://cloud.google.com/spanner) that provides rudimentary distributed computing facilities to Kubernetes [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Features include:
 
 * a consistent, append-only, Spanner-backed distributed key/value storage,
 * a distributed locking/leader election mechanism through spindle,
