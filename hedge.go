@@ -103,8 +103,9 @@ func (w withLeaderCallback) Apply(op *Op) {
 	op.cbLeader = w.f
 }
 
-// WithLeaderCallback sets the node's callback function when it a leader is
-// selected (or deselected). The msg arg for h will be set to either 0 or 1.
+// WithLeaderCallback sets the node's callback function that's called when a
+// leader is selected (or deselected). The msg arg for f will be set to
+// either 0 or 1.
 func WithLeaderCallback(d interface{}, f spindle.FnLeaderCallback) Option {
 	return withLeaderCallback{d, f}
 }
