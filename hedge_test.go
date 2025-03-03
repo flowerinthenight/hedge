@@ -39,14 +39,14 @@ func TestBasic(t *testing.T) {
 	op := New(client, ":8080", "locktable", "mylock", "logtable",
 		WithLeaderHandler(
 			nil,
-			func(data interface{}, msg []byte) ([]byte, error) {
+			func(data any, msg []byte) ([]byte, error) {
 				t.Log("[send] received:", string(msg))
 				return []byte("send " + string(msg)), nil
 			},
 		),
 		WithBroadcastHandler(
 			nil,
-			func(data interface{}, msg []byte) ([]byte, error) {
+			func(data any, msg []byte) ([]byte, error) {
 				t.Log("[broadcast/semaphore] received:", string(msg))
 				return nil, nil
 			},

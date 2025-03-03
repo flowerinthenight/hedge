@@ -194,7 +194,7 @@ func readSemaphoreEntry(ctx context.Context, op *Op, name string) (*LogItem, err
 
 	stmt := spanner.Statement{
 		SQL: q.String(),
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"name": fmt.Sprintf(semNamef, name),
 		},
 	}
@@ -233,7 +233,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 
 	stmt := spanner.Statement{
 		SQL: q.String(),
-		Params: map[string]interface{}{
+		Params: map[string]any{
 			"key": fmt.Sprintf(semCallerf, caller),
 			"id":  fmt.Sprintf(semNamef, name),
 		},
@@ -274,7 +274,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 
 				stmt := spanner.Statement{
 					SQL: q.String(),
-					Params: map[string]interface{}{
+					Params: map[string]any{
 						"id": fmt.Sprintf(semNamef, name),
 					},
 				}
@@ -325,7 +325,7 @@ func createAcquireSemaphoreEntry(ctx context.Context, op *Op, name, caller strin
 
 				txn.Update(ctx, spanner.Statement{
 					SQL: q.String(),
-					Params: map[string]interface{}{
+					Params: map[string]any{
 						"val":  markDel,
 						"name": fmt.Sprintf(semNamef, name),
 					},
@@ -355,7 +355,7 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, l
 
 			txn.Update(ctx, spanner.Statement{ // best-effort, could fail
 				SQL: q.String(),
-				Params: map[string]interface{}{
+				Params: map[string]any{
 					"key": fmt.Sprintf(semCallerf, caller),
 					"id":  fmt.Sprintf(semNamef, name),
 				},
@@ -369,7 +369,7 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, l
 
 			stmt := spanner.Statement{
 				SQL:    q.String(),
-				Params: map[string]interface{}{"id": fmt.Sprintf(semNamef, name)},
+				Params: map[string]any{"id": fmt.Sprintf(semNamef, name)},
 			}
 
 			var cnt int64
@@ -399,7 +399,7 @@ func releaseSemaphore(ctx context.Context, op *Op, name, caller, value string, l
 
 				txn.Update(ctx, spanner.Statement{
 					SQL:    q.String(),
-					Params: map[string]interface{}{"key": fmt.Sprintf(semNamef, name)},
+					Params: map[string]any{"key": fmt.Sprintf(semNamef, name)},
 				})
 			}
 
@@ -457,7 +457,7 @@ func ensureLiveness(ctx context.Context, op *Op) {
 
 		stmt := spanner.Statement{
 			SQL: q.String(),
-			Params: map[string]interface{}{
+			Params: map[string]any{
 				"id": fmt.Sprintf(semNamef, name),
 			},
 		}

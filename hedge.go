@@ -55,7 +55,7 @@ var (
 	}
 )
 
-type FnMsgHandler func(data interface{}, msg []byte) ([]byte, error)
+type FnMsgHandler func(data any, msg []byte) ([]byte, error)
 
 // KeyValue is for Put()/Get() callers.
 type KeyValue struct {
@@ -94,7 +94,7 @@ func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w
 func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
 
 type withLeaderCallback struct {
-	d interface{}
+	d any
 	f spindle.FnLeaderCallback
 }
 
@@ -106,12 +106,12 @@ func (w withLeaderCallback) Apply(op *Op) {
 // WithLeaderCallback sets the node's callback function that will be called
 // when a leader node selected (or deselected). The msg arg for f will be
 // set to either 0 or 1.
-func WithLeaderCallback(d interface{}, f spindle.FnLeaderCallback) Option {
+func WithLeaderCallback(d any, f spindle.FnLeaderCallback) Option {
 	return withLeaderCallback{d, f}
 }
 
 type withLeaderHandler struct {
-	d interface{}
+	d any
 	h FnMsgHandler
 }
 
@@ -133,12 +133,12 @@ func (w withLeaderHandler) Apply(op *Op) {
 //     along with the message.
 //  4. FnLeaderHandler will process the data as leader, then returns the
 //     reply to the calling member.
-func WithLeaderHandler(d interface{}, h FnMsgHandler) Option {
+func WithLeaderHandler(d any, h FnMsgHandler) Option {
 	return withLeaderHandler{d, h}
 }
 
 type withBroadcastHandler struct {
-	d interface{}
+	d any
 	h FnMsgHandler
 }
 
@@ -154,7 +154,7 @@ func (w withBroadcastHandler) Apply(op *Op) {
 // handler's returning []byte will serve as reply.
 //
 // A nil broadcast handler disables the internal heartbeat function.
-func WithBroadcastHandler(d interface{}, h FnMsgHandler) Option {
+func WithBroadcastHandler(d any, h FnMsgHandler) Option {
 	return withBroadcastHandler{d, h}
 }
 
@@ -229,11 +229,11 @@ type Op struct {
 	logTable      string          // append-only log table
 
 	cbLeader           spindle.FnLeaderCallback
-	cbLeaderData       interface{}
+	cbLeaderData       any
 	fnLeader           FnMsgHandler // leader message handler
-	fnLdrData          interface{}  // arbitrary data passed to fnLeader
+	fnLdrData          any          // arbitrary data passed to fnLeader
 	fnBroadcast        FnMsgHandler // broadcast message handler
-	fnBcData           interface{}  // arbitrary data passed to fnBroadcast
+	fnBcData           any          // arbitrary data passed to fnBroadcast
 	leaderStreamIn     chan *StreamMessage
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
@@ -364,7 +364,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName),
 		spindle.WithDuration(op.lockTimeout),
 		spindle.WithId(op.hostPort),
-		spindle.WithLeaderCallback(op.cbLeaderData, func(data interface{}, msg []byte) {
+		spindle.WithLeaderCallback(op.cbLeaderData, func(data any, msg []byte) {
 			if op.cbLeader != nil {
 				m := fmt.Sprintf("%v %v", string(msg), op.Name())
 				op.cbLeader(data, []byte(m))
@@ -645,7 +645,7 @@ func (op *Op) Get(ctx context.Context, key string, limit ...int64) ([]KeyValue, 
 		}
 	}
 
-	stmt := spanner.Statement{SQL: q.String(), Params: map[string]interface{}{"key": key}}
+	stmt := spanner.Statement{SQL: q.String(), Params: map[string]any{"key": key}}
 	iter := op.spannerClient.Single().Query(ctx, stmt)
 	defer iter.Stop()
 	for {
@@ -713,7 +713,7 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 		_, err := op.spannerClient.Apply(ctx, []*spanner.Mutation{
 			spanner.InsertOrUpdate(op.logTable,
 				[]string{"id", "key", "value", "leader", "timestamp"},
-				[]interface{}{id, kv.Key, kv.Value, op.hostPort, spanner.CommitTimestamp},
+				[]any{id, kv.Key, kv.Value, op.hostPort, spanner.CommitTimestamp},
 			),
 		})
 
