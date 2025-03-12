@@ -215,7 +215,7 @@ func (w withLogger) Apply(op *Op) { op.logger = w.l }
 
 // WithLogger sets Op's logger object. Can be silenced by setting v to:
 //
-//	log.New(ioutil.Discard, "", 0)
+//	log.New(io.Discard, "", 0)
 func WithLogger(v *log.Logger) Option { return withLogger{v} }
 
 // Op is our main instance for hedge operations.
