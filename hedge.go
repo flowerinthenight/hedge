@@ -886,8 +886,9 @@ type BroadcastOutput struct {
 }
 
 type BroadcastArgs struct {
-	SkipSelf bool // if true, skip broadcasting to self
-	Out      chan BroadcastOutput
+	SkipSelf   bool     // if true, skip broadcasting to self
+	OnlySendTo []string // if set, only send to these members
+	Out        chan BroadcastOutput
 }
 
 // Broadcast sends msg to all nodes (send to all). Any node can broadcast messages, including the
@@ -921,6 +922,16 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		stream = true
 	default:
 		outch = make(chan BroadcastOutput, len(members))
+	}
+
+	if len(args) > 0 && len(args[0].OnlySendTo) > 0 {
+		filtered := make(map[string]struct{})
+		for _, v := range args[0].OnlySendTo {
+			if _, ok := members[v]; ok {
+				filtered[v] = struct{}{}
+			}
+		}
+		members = filtered
 	}
 
 	for k := range members {
