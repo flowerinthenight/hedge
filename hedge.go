@@ -147,6 +147,21 @@ func (w withBroadcastHandler) Apply(op *Op) {
 	op.fnBroadcast = w.h
 }
 
+// WithMemberChangesHandler sets the leader node's callback function for member changes
+func WithMemberChangesHandler(d any, h FnMsgHandler) Option {
+	return withMemberChangesHandler{d, h}
+}
+
+type withMemberChangesHandler struct {
+	d any
+	h FnMsgHandler
+}
+
+func (w withMemberChangesHandler) Apply(op *Op) {
+	op.fnMemChangesData = w.d
+	op.fnMemberChanges = w.h
+}
+
 // WithBroadcastHandler sets the node's callback function for broadcast messages
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
 // represented by d will be passed to the callback h every time it is called.
@@ -234,6 +249,8 @@ type Op struct {
 	fnLdrData          any          // arbitrary data passed to fnLeader
 	fnBroadcast        FnMsgHandler // broadcast message handler
 	fnBcData           any          // arbitrary data passed to fnBroadcast
+	fnMemberChanges    FnMsgHandler // member changes message handler
+	fnMemChangesData   any          // arbitrary data passed to fnMemberChanges
 	leaderStreamIn     chan *StreamMessage
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
@@ -416,6 +433,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			var w sync.WaitGroup
 			allm := op.getMembers()
+			oldallm := make(map[string]struct{})
+			for k := range allm {
+				oldallm[k] = struct{}{}
+			}
 			for k := range allm {
 				w.Add(1)
 				go func(id string) {
@@ -448,6 +469,17 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 				if rm != "" {
 					op.logger.Printf("[leader] delete %v", rm)
 					op.delMember(rm)
+				}
+			}
+
+			newallm := op.getMembers()
+			if len(oldallm) != len(newallm) && op.fnMemberChanges != nil {
+				b, err := json.Marshal(map[string]map[string]struct{}{
+					"oldmembers": oldallm,
+					"newmembers": newallm,
+				})
+				if err == nil {
+					op.fnMemberChanges(op.fnMemChangesData, b)
 				}
 			}
 
@@ -887,7 +919,7 @@ type BroadcastOutput struct {
 
 type BroadcastArgs struct {
 	SkipSelf   bool     // if true, skip broadcasting to self
-	OnlySendTo []string // if set, only send to these members
+	OnlySendTo []string // if set, only send to these member(s)
 	Out        chan BroadcastOutput
 }
 
@@ -924,6 +956,7 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		outch = make(chan BroadcastOutput, len(members))
 	}
 
+	op.logger.Printf("[Broadcast] mem: %v", members)
 	if len(args) > 0 && len(args[0].OnlySendTo) > 0 {
 		filtered := make(map[string]struct{})
 		for _, v := range args[0].OnlySendTo {
@@ -931,9 +964,10 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 				filtered[v] = struct{}{}
 			}
 		}
+		op.logger.Printf("[Broadcast] filtered: %v", filtered)
 		members = filtered
 	}
-
+	op.logger.Println("mem to broadcast", members)
 	for k := range members {
 		w.Add(1)
 		go func(id string) {
