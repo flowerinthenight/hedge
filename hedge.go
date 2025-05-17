@@ -956,7 +956,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		outch = make(chan BroadcastOutput, len(members))
 	}
 
-	op.logger.Printf("[Broadcast] mem: %v", members)
 	if len(args) > 0 && len(args[0].OnlySendTo) > 0 {
 		filtered := make(map[string]struct{})
 		for _, v := range args[0].OnlySendTo {
@@ -964,10 +963,9 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 				filtered[v] = struct{}{}
 			}
 		}
-		op.logger.Printf("[Broadcast] filtered: %v", filtered)
 		members = filtered
 	}
-	op.logger.Println("mem to broadcast", members)
+
 	for k := range members {
 		w.Add(1)
 		go func(id string) {
