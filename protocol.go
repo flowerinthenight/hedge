@@ -128,13 +128,13 @@ func doHeartbeat(ctx context.Context, op *Op, conn net.Conn, msg string) {
 	oldallm := op.getMembers()
 	op.addMember(strings.Split(msg, " ")[1])
 	newallm := op.getMembers()
-	if len(oldallm) != len(newallm) && op.fnMemberChanges != nil {
+	if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
 		b, err := json.Marshal(map[string]map[string]struct{}{
 			"oldmembers": oldallm,
 			"newmembers": newallm,
 		})
 		if err == nil {
-			op.fnMemberChanges(op.fnMemChangesData, b)
+			op.fnMemberChanged(op.fnMemChangedData, b)
 		}
 	}
 

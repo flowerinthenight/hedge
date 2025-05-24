@@ -148,18 +148,18 @@ func (w withBroadcastHandler) Apply(op *Op) {
 }
 
 // WithMemberChangesHandler sets the leader node's callback function for member changes
-func WithMemberChangesHandler(d any, h FnMsgHandler) Option {
-	return withMemberChangesHandler{d, h}
+func WithMemberChangedHandler(d any, h FnMsgHandler) Option {
+	return withMemberChangedHandler{d, h}
 }
 
-type withMemberChangesHandler struct {
+type withMemberChangedHandler struct {
 	d any
 	h FnMsgHandler
 }
 
-func (w withMemberChangesHandler) Apply(op *Op) {
-	op.fnMemChangesData = w.d
-	op.fnMemberChanges = w.h
+func (w withMemberChangedHandler) Apply(op *Op) {
+	op.fnMemChangedData = w.d
+	op.fnMemberChanged = w.h
 }
 
 // WithBroadcastHandler sets the node's callback function for broadcast messages
@@ -249,8 +249,8 @@ type Op struct {
 	fnLdrData          any          // arbitrary data passed to fnLeader
 	fnBroadcast        FnMsgHandler // broadcast message handler
 	fnBcData           any          // arbitrary data passed to fnBroadcast
-	fnMemberChanges    FnMsgHandler // member changes message handler
-	fnMemChangesData   any          // arbitrary data passed to fnMemberChanges
+	fnMemberChanged    FnMsgHandler // member changes message handler
+	fnMemChangedData   any          // arbitrary data passed to fnMemberChanges
 	leaderStreamIn     chan *StreamMessage
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
@@ -473,13 +473,13 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			newallm := op.getMembers()
-			if len(oldallm) != len(newallm) && op.fnMemberChanges != nil {
+			if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
 				b, err := json.Marshal(map[string]map[string]struct{}{
 					"oldmembers": oldallm,
 					"newmembers": newallm,
 				})
 				if err == nil {
-					op.fnMemberChanges(op.fnMemChangesData, b)
+					op.fnMemberChanged(op.fnMemChangedData, b)
 				}
 			}
 
