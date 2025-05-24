@@ -147,7 +147,7 @@ func (w withBroadcastHandler) Apply(op *Op) {
 	op.fnBroadcast = w.h
 }
 
-// WithMemberChangesHandler sets the leader node's callback function for member changes
+// WithMemberChangedHandler sets the leader node's callback function for any member changes
 func WithMemberChangedHandler(d any, h FnMsgHandler) Option {
 	return withMemberChangedHandler{d, h}
 }
@@ -250,7 +250,7 @@ type Op struct {
 	fnBroadcast        FnMsgHandler // broadcast message handler
 	fnBcData           any          // arbitrary data passed to fnBroadcast
 	fnMemberChanged    FnMsgHandler // member changes message handler
-	fnMemChangedData   any          // arbitrary data passed to fnMemberChanges
+	fnMemChangedData   any          // arbitrary data passed to fnMemberChanged
 	leaderStreamIn     chan *StreamMessage
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
