@@ -948,14 +948,6 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		delete(members, op.Name())
 	}
 
-	switch {
-	case len(args) > 0 && args[0].Out != nil:
-		outch = args[0].Out
-		stream = true
-	default:
-		outch = make(chan BroadcastOutput, len(members))
-	}
-
 	if len(args) > 0 && len(args[0].OnlySendTo) > 0 {
 		filtered := make(map[string]struct{})
 		for _, v := range args[0].OnlySendTo {
@@ -964,6 +956,14 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 			}
 		}
 		members = filtered
+	}
+
+	switch {
+	case len(args) > 0 && args[0].Out != nil:
+		outch = args[0].Out
+		stream = true
+	default:
+		outch = make(chan BroadcastOutput, len(members))
 	}
 
 	for k := range members {
