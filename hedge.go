@@ -147,6 +147,21 @@ func (w withBroadcastHandler) Apply(op *Op) {
 	op.fnBroadcast = w.h
 }
 
+// WithMemberChangedHandler sets the leader node's callback function for any member changes
+func WithMemberChangedHandler(d any, h FnMsgHandler) Option {
+	return withMemberChangedHandler{d, h}
+}
+
+type withMemberChangedHandler struct {
+	d any
+	h FnMsgHandler
+}
+
+func (w withMemberChangedHandler) Apply(op *Op) {
+	op.fnMemChangedData = w.d
+	op.fnMemberChanged = w.h
+}
+
 // WithBroadcastHandler sets the node's callback function for broadcast messages
 // from anyone in the group using the Broadcast(...) API. Any arbitrary data
 // represented by d will be passed to the callback h every time it is called.
@@ -234,6 +249,8 @@ type Op struct {
 	fnLdrData          any          // arbitrary data passed to fnLeader
 	fnBroadcast        FnMsgHandler // broadcast message handler
 	fnBcData           any          // arbitrary data passed to fnBroadcast
+	fnMemberChanged    FnMsgHandler // member changes message handler
+	fnMemChangedData   any          // arbitrary data passed to fnMemberChanged
 	leaderStreamIn     chan *StreamMessage
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
@@ -416,6 +433,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			var w sync.WaitGroup
 			allm := op.getMembers()
+			oldallm := make(map[string]struct{})
+			for k := range allm {
+				oldallm[k] = struct{}{}
+			}
 			for k := range allm {
 				w.Add(1)
 				go func(id string) {
@@ -449,6 +470,11 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 					op.logger.Printf("[leader] delete %v", rm)
 					op.delMember(rm)
 				}
+			}
+
+			newallm := op.getMembers()
+			if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
+				op.fnMemberChanged(op.fnMemChangedData, nil)
 			}
 
 			// Broadcast active members to all.
