@@ -124,9 +124,14 @@ func doBroadcast(ctx context.Context, op *Op, conn net.Conn, msg string) {
 
 func doHeartbeat(ctx context.Context, op *Op, conn net.Conn, msg string) {
 	var sb strings.Builder
+	oldallm := op.getMembers()
 	op.addMember(strings.Split(msg, " ")[1])
 	fmt.Fprintf(&sb, "%s\n", op.encodeMembers())
 	conn.Write([]byte(sb.String()))
+	newallm := op.getMembers()
+	if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
+		op.fnMemberChanged(op.fnMemChangedData, nil)
+	}
 }
 
 func doMembers(ctx context.Context, op *Op, conn net.Conn, msg string) {
