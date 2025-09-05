@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"strconv"
@@ -147,17 +148,17 @@ func (w withBroadcastHandler) Apply(op *Op) {
 	op.fnBroadcast = w.h
 }
 
-// WithMemberChangedHandler sets the leader node's callback function for any member changes
-func WithMemberChangedHandler(d any, h FnMsgHandler) Option {
-	return withMemberChangedHandler{d, h}
+// WithMembersChangedHandler sets the leader node's callback function for any member changes
+func WithMembersChangedHandler(d any, h FnMsgHandler) Option {
+	return withMembersChangedHandler{d, h}
 }
 
-type withMemberChangedHandler struct {
+type withMembersChangedHandler struct {
 	d any
 	h FnMsgHandler
 }
 
-func (w withMemberChangedHandler) Apply(op *Op) {
+func (w withMembersChangedHandler) Apply(op *Op) {
 	op.fnMemChangedData = w.d
 	op.fnMemberChanged = w.h
 }
@@ -421,8 +422,8 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			go func() {
 				for {
 					m := <-ch
-					switch {
-					case m == nil:
+					switch m {
+					case nil:
 						emdone <- struct{}{}
 						return
 					default:
@@ -434,9 +435,8 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			var w sync.WaitGroup
 			allm := op.getMembers()
 			oldallm := make(map[string]struct{})
-			for k := range allm {
-				oldallm[k] = struct{}{}
-			}
+			maps.Copy(oldallm, allm)
+
 			for k := range allm {
 				w.Add(1)
 				go func(id string) {
@@ -478,7 +478,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 			}
 
 			// Broadcast active members to all.
-			for k := range op.getMembers() {
+			for k := range newallm {
 				w.Add(1)
 				go func(id string) {
 					defer w.Done()
@@ -1337,10 +1337,7 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 func (op *Op) getMembers() map[string]struct{} {
 	op.mtx.Lock()
 	copy := make(map[string]struct{})
-	for k, v := range op.members {
-		copy[k] = v
-	}
-
+	maps.Copy(copy, op.members)
 	op.mtx.Unlock()
 	return copy
 }
