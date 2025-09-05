@@ -74,12 +74,12 @@ func (s *Semaphore) acquire(ctx context.Context, noretry bool) error {
 				switch {
 				case strings.HasPrefix(string(dec), "0:"):
 					serr := strings.Replace(string(dec), "0:", "", 1)
-					return false, fmt.Errorf(serr)
+					return false, fmt.Errorf("%v", serr)
 				case strings.HasPrefix(string(dec), "1:"):
 					serr := strings.Replace(string(dec), "1:", "", 1)
-					return true, fmt.Errorf(serr)
+					return true, fmt.Errorf("%v", serr)
 				default: // shouldn't be the case, hopefully
-					return false, fmt.Errorf(string(dec))
+					return false, fmt.Errorf("%v", string(dec))
 				}
 			}
 		default:
@@ -155,7 +155,7 @@ func (s *Semaphore) Release(ctx context.Context) error {
 		ss := strings.Split(reply, " ")
 		if len(ss) > 1 { // failed
 			dec, _ := base64.StdEncoding.DecodeString(ss[1])
-			return fmt.Errorf(string(dec))
+			return fmt.Errorf("%v", string(dec))
 		}
 	}
 

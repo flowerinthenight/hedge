@@ -605,7 +605,7 @@ func (op *Op) NewSemaphore(ctx context.Context, name string, limit int) (*Semaph
 		ss := strings.Split(reply, " ")
 		if len(ss) > 1 { // failed
 			dec, _ := base64.StdEncoding.DecodeString(ss[1])
-			return nil, fmt.Errorf(string(dec))
+			return nil, fmt.Errorf("%v", string(dec))
 		}
 	default:
 		return nil, ErrNotSupported
@@ -776,7 +776,7 @@ func (op *Op) Put(ctx context.Context, kv KeyValue, po ...PutOptions) error {
 		ss := strings.Split(reply, " ")
 		if len(ss) > 1 { // failed
 			dec, _ := base64.StdEncoding.DecodeString(ss[1])
-			return fmt.Errorf(string(dec))
+			return fmt.Errorf("%v", string(dec))
 		}
 	default:
 		return ErrNoLeader
@@ -816,7 +816,7 @@ func (op *Op) Send(ctx context.Context, msg []byte) ([]byte, error) {
 
 	// If not ACK, then the whole reply is an error string.
 	b, _ := base64.StdEncoding.DecodeString(reply)
-	return nil, fmt.Errorf(string(b))
+	return nil, fmt.Errorf("%v", string(b))
 }
 
 type StreamToLeaderOutput struct {
@@ -993,7 +993,7 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 
 			// If not ACK, then the whole reply is an error string.
 			r, _ := base64.StdEncoding.DecodeString(reply)
-			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf(string(r))}
+			outch <- BroadcastOutput{Id: id, Error: fmt.Errorf("%v", string(r))}
 		}(k)
 	}
 
