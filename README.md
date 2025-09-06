@@ -20,7 +20,7 @@ It also works even on single-pod deployments.
   <img src="./assets/hedge.png" width="560" title="hedge">
 </p>
 
-At the moment, **hedge** is heavily used in [Alphaus](https://www.alphaus.cloud/) production with services that scale from single digit pods to hundreds.
+**hedge** is heavily used in [Alphaus](https://www.alphaus.cloud/) production with services that scale from single digit pods to hundreds.
 
 Ports:
 
