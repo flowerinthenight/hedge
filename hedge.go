@@ -474,7 +474,13 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			newallm := op.getMembers()
 			if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
-				op.fnMemberChanged(op.fnMemChangedData, nil)
+				var s string
+				if len(oldallm) < len(newallm) {
+					s = "1" // new member joined
+				} else {
+					s = "0" // member left
+				}
+				op.fnMemberChanged(op.fnMemChangedData, []byte(s))
 			}
 
 			// Broadcast active members to all.
