@@ -130,7 +130,8 @@ func doHeartbeat(ctx context.Context, op *Op, conn net.Conn, msg string) {
 	conn.Write([]byte(sb.String()))
 	newallm := op.getMembers()
 	if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
-		op.fnMemberChanged(op.fnMemChangedData, nil)
+		diff := len(newallm) - len(oldallm)
+		op.fnMemberChanged(op.fnMemChangedData, []byte(fmt.Sprintf("%v", diff)))
 	}
 }
 

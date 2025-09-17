@@ -474,7 +474,8 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			newallm := op.getMembers()
 			if len(oldallm) != len(newallm) && op.fnMemberChanged != nil {
-				op.fnMemberChanged(op.fnMemChangedData, nil)
+				diff := len(newallm) - len(oldallm)
+				op.fnMemberChanged(op.fnMemChangedData, []byte(fmt.Sprintf("%v", diff)))
 			}
 
 			// Broadcast active members to all.
