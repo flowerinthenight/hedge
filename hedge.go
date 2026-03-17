@@ -19,7 +19,7 @@ import (
 
 	"cloud.google.com/go/spanner"
 	pb "github.com/flowerinthenight/hedge-proto"
-	"github.com/flowerinthenight/spindle/v2"
+	"github.com/flowerinthenight/spindle/v3"
 	"github.com/google/uuid"
 	gaxv2 "github.com/googleapis/gax-go/v2"
 	"github.com/hashicorp/memberlist"
@@ -82,8 +82,8 @@ type withDuration int64
 
 func (w withDuration) Apply(op *Op) { op.lockTimeout = int64(w) }
 
-// WithDuration sets Op's internal spindle object's lease duration in milliseconds.
-// Defaults to 30000ms (30s) when not set. Minimum value is 2000ms (2s).
+// WithDuration sets Op's internal spindle object's lease duration in seconds.
+// Defaults to 30s when not set. Minimum value is 5s.
 func WithDuration(v int64) Option { return withDuration(v) }
 
 type withGroupSyncInterval time.Duration
@@ -94,9 +94,12 @@ func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w
 // within the group in seconds. If not set, defaults to 30s. Minimum value is 2s.
 func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
 
+// FnLeaderCallback is the node's callback function when a leader node is selected (or deselected).
+type FnLeaderCallback func(data any, msg []byte)
+
 type withLeaderCallback struct {
 	d any
-	f spindle.FnLeaderCallback
+	f FnLeaderCallback
 }
 
 func (w withLeaderCallback) Apply(op *Op) {
@@ -107,7 +110,7 @@ func (w withLeaderCallback) Apply(op *Op) {
 // WithLeaderCallback sets the node's callback function that will be called
 // when a leader node selected (or deselected). The msg arg for f will be
 // set to either 0 or 1.
-func WithLeaderCallback(d any, f spindle.FnLeaderCallback) Option {
+func WithLeaderCallback(d any, f FnLeaderCallback) Option {
 	return withLeaderCallback{d, f}
 }
 
@@ -241,10 +244,12 @@ type Op struct {
 	spannerClient *spanner.Client // both for spindle and hedge
 	lockTable     string          // spindle lock table
 	lockName      string          // spindle lock name
-	lockTimeout   int64           // spindle's lock lease duration in ms
+	lockTimeout   int64           // spindle's lock lease duration in seconds
 	logTable      string          // append-only log table
 
-	cbLeader           spindle.FnLeaderCallback
+	currentLeaderState atomic.Value // Stores spindle.LeaderState
+
+	cbLeader           FnLeaderCallback
 	cbLeaderData       any
 	fnLeader           FnMsgHandler // leader message handler
 	fnLdrData          any          // arbitrary data passed to fnLeader
@@ -292,6 +297,38 @@ func (op *Op) Name() string { return op.hostPort }
 
 // IsRunning returns true if Op is already running.
 func (op *Op) IsRunning() bool { return op.active.Load() == 1 }
+
+// HasLock returns true if this node is the leader, along with its token.
+func (op *Op) HasLock() (bool, uint64) {
+	s := op.currentLeaderState.Load()
+	if s == nil {
+		return false, 0
+	}
+	state := s.(spindle.LeaderState)
+	return state.Leader, uint64(state.Token)
+}
+
+// Leader returns the current leader's ID.
+func (op *Op) Leader() (string, error) {
+	var leader string
+	stmt := spanner.Statement{
+		SQL:    fmt.Sprintf("SELECT owner FROM %s WHERE name = @name", op.lockTable),
+		Params: map[string]any{"name": op.lockName},
+	}
+	iter := op.spannerClient.Single().Query(context.Background(), stmt)
+	defer iter.Stop()
+	row, err := iter.Next()
+	if err == iterator.Done {
+		return "", ErrNoLeader
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := row.Columns(&leader); err != nil {
+		return "", err
+	}
+	return leader, nil
+}
 
 // Run starts the main handler. It blocks until ctx is cancelled,
 // optionally sending an error message to done when finished.
@@ -375,21 +412,35 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 	reflection.Register(gs) // register reflection service
 	go gs.Serve(gl)
 
+	op.lockName = fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName)
+
 	// Setup and start our internal spindle object.
-	op.Lock = spindle.New(
+	l, err := spindle.New(
 		op.spannerClient,
 		op.lockTable,
-		fmt.Sprintf("hedge/spindle/lockname/%v", op.lockName),
+		op.lockName,
 		spindle.WithDuration(op.lockTimeout),
 		spindle.WithId(op.hostPort),
-		spindle.WithLeaderCallback(op.cbLeaderData, func(data any, msg []byte) {
-			if op.cbLeader != nil {
-				m := fmt.Sprintf("%v %v", string(msg), op.Name())
-				op.cbLeader(data, []byte(m))
-			}
-		}),
+		spindle.WithLeaderCallback(op.cbLeaderData,
+			func(ctx context.Context, state spindle.LeaderState) {
+				op.currentLeaderState.Store(state)
+				if op.cbLeader != nil {
+					msgStr := "0"
+					if state.Leader {
+						msgStr = "1"
+					}
+					m := fmt.Sprintf("%v %v", msgStr, op.Name())
+					op.cbLeader(state.Data, []byte(m))
+				}
+			},
+		),
 		spindle.WithLogger(op.logger),
+		spindle.WithDebug(true),
 	)
+	if err != nil {
+		return err
+	}
+	op.Lock = l
 
 	spindleDone := make(chan error, 1)
 	ctxSpindle, cancel := context.WithCancel(context.Background())
@@ -1196,7 +1247,7 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 	subctx := context.WithValue(ctx, struct{}{}, nil)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	tcnt, tlimit := int64(0), (op.lockTimeout/2000)*2
+	tcnt, tlimit := int64(0), op.lockTimeout
 	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
@@ -1278,7 +1329,7 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 	subctx := context.WithValue(ctx, struct{}{}, nil)
 	first := make(chan struct{}, 1)
 	first <- struct{}{} // immediately the first time
-	tcnt, tlimit := int64(0), (op.lockTimeout/2000)*2
+	tcnt, tlimit := int64(0), op.lockTimeout
 	ticker := time.NewTicker(time.Second * 2) // processing can be more than this
 	defer ticker.Stop()
 
@@ -1430,9 +1481,9 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 
 	switch {
 	case op.lockTimeout == 0:
-		op.lockTimeout = 30000 // default 30s
-	case op.lockTimeout < 2000:
-		op.lockTimeout = 2000 // minimum 2s
+		op.lockTimeout = 30 // default 30s
+	case op.lockTimeout < 5:
+		op.lockTimeout = 5 // minimum 5s
 	}
 
 	switch {

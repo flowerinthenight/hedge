@@ -66,8 +66,8 @@ github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/flowerinthenight/hedge-proto v0.1.0 h1:JnFbUGrTddE8wlxyzxzEa3ZVhZX8svJ3GAY1v5vmB1E=
 github.com/flowerinthenight/hedge-proto v0.1.0/go.mod h1:MX38DIqqM328L1TbbUcBmqEyo7eY7znOSdyKwakc6Rg=
-github.com/flowerinthenight/spindle/v2 v2.2.0 h1:kNuT1c7oRir0H8y0isSj4JJfo8JxPV7s1OyErsKXV8I=
-github.com/flowerinthenight/spindle/v2 v2.2.0/go.mod h1:Aqq145TsdqGeYeOCCoFtbPCJkpzbZvp69Ix62FtzVK0=
+github.com/flowerinthenight/spindle/v3 v3.1.0 h1:v3hTf20s82xmXlhfm9qL2GxJFi7HVM1ERxm1Rr66Ia0=
+github.com/flowerinthenight/spindle/v3 v3.1.0/go.mod h1:WiefHVQOy/aLqw/iLTI4rKt4Q3OxIMN0+XS2UlDEKX4=
 github.com/go-jose/go-jose/v4 v4.1.3 h1:CVLmWDhDVRa6Mi/IgCgaopNosCaHz7zrMeF9MlZRkrs=
 github.com/go-jose/go-jose/v4 v4.1.3/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-kit/kit v0.8.0/go.mod h1:xBxKIO96dXMWWy0MnWVtmwkA9/13aqxPnvrjFYMA2as=
