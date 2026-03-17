@@ -1,6 +1,6 @@
 [![main](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/hedge/actions/workflows/main.yml)
 [![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/hedgedemo/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/hedgedemo)
-[![Go Reference](https://pkg.go.dev/badge/github.com/flowerinthenight/hedge.svg)](https://pkg.go.dev/github.com/flowerinthenight/hedge)
+[![Go Reference](https://pkg.go.dev/badge/github.com/flowerinthenight/hedge/v3.svg)](https://pkg.go.dev/github.com/flowerinthenight/hedge/v3)
 
 (This repo is mirrored to [https://codeberg.org/flowerinthenight/hedge](https://codeberg.org/flowerinthenight/hedge)).
 
@@ -33,7 +33,7 @@ First, I wanted a cluster coordinator that can work within k8s Deployments as a 
 ## What does it do?
 Leader election is handled by [spindle](https://github.com/flowerinthenight/spindle). Two APIs are provided for storage: `Put()` and `Get()`. All pods can serve the `Get()` calls, while only the leader handles the `Put()` API. If a non-leader pod calls `Put()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only.
 
-Spindle's `HasLock()` function is also available for distributed locking due to struct embedding, although you can use spindle separately for that, if you prefer.
+A `HasLock()` function is also available for distributed locking, although you can use spindle separately for that, if you prefer.
 
 A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader at any time. A streaming equivalent (gRPC) is also available.
 
