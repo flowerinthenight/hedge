@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -45,11 +46,11 @@ const (
 )
 
 var (
-	ErrNotRunning   = fmt.Errorf("hedge: not running")
-	ErrNoLeader     = fmt.Errorf("hedge: no leader available")
-	ErrNoHandler    = fmt.Errorf("hedge: no message handler")
-	ErrNotSupported = fmt.Errorf("hedge: not supported")
-	ErrInvalidConn  = fmt.Errorf("hedge: invalid connection")
+	ErrNotRunning   = errors.New("hedge: not running")
+	ErrNoLeader     = errors.New("hedge: no leader available")
+	ErrNoHandler    = errors.New("hedge: no message handler")
+	ErrNotSupported = errors.New("hedge: not supported")
+	ErrInvalidConn  = errors.New("hedge: invalid connection")
 
 	cctx = func(ctx context.Context) context.Context {
 		return context.WithValue(ctx, struct{}{}, nil)
@@ -1319,7 +1320,7 @@ func (op *Op) getLeaderConn(ctx context.Context) (net.Conn, error) {
 		}
 	}
 
-	return conn, nil
+	return conn, err
 }
 
 // Don't forget to close the returned connection.
@@ -1394,7 +1395,7 @@ func (op *Op) getLeaderGrpcConn(ctx context.Context) (*grpc.ClientConn, error) {
 		}
 	}
 
-	return conn, nil
+	return conn, err
 }
 
 func (op *Op) getMembers() map[string]struct{} {

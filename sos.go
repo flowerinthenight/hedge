@@ -296,8 +296,10 @@ func (w *Writer) start() {
 
 	unlock(mlock, w.sos.mlock)
 
-	file.Sync()
-	file.Close()
+	if file != nil {
+		file.Sync()
+		file.Close()
+	}
 	unlock(dlock, w.sos.dlock)
 
 	for _, n := range nodes {
