@@ -500,6 +500,7 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 						return
 					}
 
+					defer conn.Close()
 					var sb strings.Builder
 					fmt.Fprintf(&sb, "%s\n", CmdPing)
 					r, err := op.send(conn, sb.String())
