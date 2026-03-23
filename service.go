@@ -146,9 +146,14 @@ loop:
 		}
 
 		if writer == nil {
-			writer, _ = s.op.soss[name].Writer(&writerOptions{
+			var werr error
+			writer, werr = s.op.soss[name].Writer(&writerOptions{
 				LocalOnly: true,
 			})
+			if werr != nil {
+				s.op.logger.Println("Writer failed:", werr)
+				continue
+			}
 		}
 
 		writer.Write(in.Data)
@@ -185,7 +190,12 @@ func (s *service) SoSRead(hs pb.Hedge_SoSReadServer) error {
 		})
 	}
 
-	reader, _ := s.op.soss[name].Reader(&readerOptions{LocalOnly: true})
+	reader, rerr := s.op.soss[name].Reader(&readerOptions{LocalOnly: true})
+	if rerr != nil {
+		s.op.logger.Println("Reader failed:", rerr)
+		return nil
+	}
+
 	out := make(chan []byte)
 	eg := new(errgroup.Group)
 	eg.Go(func() error {
@@ -211,6 +221,8 @@ func (s *service) SoSRead(hs pb.Hedge_SoSReadServer) error {
 
 func (s *service) SoSClose(ctx context.Context, in *pb.Payload) (*pb.Payload, error) {
 	name := in.Meta[metaName]
-	s.op.soss[name].Close()
+	if sos, ok := s.op.soss[name]; ok {
+		sos.Close()
+	}
 	return &pb.Payload{}, nil
 }

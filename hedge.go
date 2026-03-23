@@ -574,8 +574,9 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 			b, _ := base64.StdEncoding.DecodeString(r)
 			var allm map[string]struct{}
-			json.Unmarshal(b, &allm)
-			op.setMembers(allm)
+			if err := json.Unmarshal(b, &allm); err == nil && allm != nil {
+				op.setMembers(allm)
+			}
 		}
 
 		for {

@@ -632,8 +632,12 @@ func newSoS(name string, op *Op, opts ...*SoSOptions) *SoS {
 	}
 
 	if sos.mlimit.Load() == 0 {
-		vm, _ := mem.VirtualMemory()
-		sos.mlimit.Store(vm.Available / 2) // half of free mem
+		vm, err := mem.VirtualMemory()
+		if err != nil || vm == nil {
+			op.logger.Printf("sos: failed to detect available memory: %v", err)
+		} else {
+			sos.mlimit.Store(vm.Available / 2) // half of free mem
+		}
 	}
 
 	if sos.dlimit.Load() == 0 {
