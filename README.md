@@ -81,16 +81,22 @@ op := hedge.New(
     "locktable",
     "myspindlelock",
     "logtable",
+    hedge.WithLeaderCallback( // called when leader status changes
+        nil,
+        func(ctx context.Context, state hedge.LeaderState) {
+            log.Println("callback: leader=", state.Leader)
+        },
+    ),
     hedge.WithLeaderHandler( // if leader only, handles Send()
         nil,
-        func(data interface{}, msg []byte) ([]byte, error) {
+        func(data any, msg []byte) ([]byte, error) {
             log.Println("[send] received:", string(msg))
             return []byte("hello " + string(msg)), nil
         },
     ),
     hedge.WithBroadcastHandler( // handles Broadcast()
         nil,
-        func(data interface{}, msg []byte) ([]byte, error) {
+        func(data any, msg []byte) ([]byte, error) {
             log.Println("[broadcast] received:", string(msg))
             return []byte("broadcast " + string(msg)), nil
         },
