@@ -95,8 +95,15 @@ func (w withGroupSyncInterval) Apply(op *Op) { op.syncInterval = time.Duration(w
 // within the group in seconds. If not set, defaults to 30s. Minimum value is 2s.
 func WithGroupSyncInterval(v time.Duration) Option { return withGroupSyncInterval(v) }
 
+// LeaderState represents the state of the lock passed to the leader callback.
+type LeaderState struct {
+	Data   any   // arbitrary data
+	Leader bool  // true if leader
+	Token  int64 // fencing token
+}
+
 // FnLeaderCallback is the node's callback function when a leader node is selected (or deselected).
-type FnLeaderCallback func(data any, msg []byte)
+type FnLeaderCallback func(ctx context.Context, state LeaderState)
 
 type withLeaderCallback struct {
 	d any
@@ -109,8 +116,7 @@ func (w withLeaderCallback) Apply(op *Op) {
 }
 
 // WithLeaderCallback sets the node's callback function that will be called
-// when a leader node selected (or deselected). The msg arg for f will be
-// set to either 0 or 1.
+// when a leader node is selected (or deselected).
 func WithLeaderCallback(d any, f FnLeaderCallback) Option {
 	return withLeaderCallback{d, f}
 }
@@ -248,7 +254,7 @@ type Op struct {
 	lockTimeout   int64           // spindle's lock lease duration in seconds
 	logTable      string          // append-only log table
 
-	currentLeaderState atomic.Value // Stores spindle.LeaderState
+	currentLeaderState atomic.Value // stores LeaderState
 
 	cbLeader           FnLeaderCallback
 	cbLeaderData       any
@@ -305,7 +311,7 @@ func (op *Op) HasLock() (bool, uint64) {
 	if s == nil {
 		return false, 0
 	}
-	state := s.(spindle.LeaderState)
+	state := s.(LeaderState)
 	return state.Leader, uint64(state.Token)
 }
 
@@ -424,14 +430,14 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 		spindle.WithId(op.hostPort),
 		spindle.WithLeaderCallback(op.cbLeaderData,
 			func(ctx context.Context, state spindle.LeaderState) {
-				op.currentLeaderState.Store(state)
+				hs := LeaderState{
+					Data:   state.Data,
+					Leader: state.Leader,
+					Token:  state.Token,
+				}
+				op.currentLeaderState.Store(hs)
 				if op.cbLeader != nil {
-					msgStr := "0"
-					if state.Leader {
-						msgStr = "1"
-					}
-					m := fmt.Sprintf("%v %v", msgStr, op.Name())
-					op.cbLeader(state.Data, []byte(m))
+					op.cbLeader(ctx, hs)
 				}
 			},
 		),

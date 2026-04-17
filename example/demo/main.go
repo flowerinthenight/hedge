@@ -78,8 +78,8 @@ func main() {
 
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithGroupSyncInterval(time.Second*5),
-		hedge.WithLeaderCallback(nil, func(d any, m []byte) {
-			log.Println("callback:", string(m))
+		hedge.WithLeaderCallback(nil, func(ctx context.Context, state hedge.LeaderState) {
+			log.Println("callback: leader=", state.Leader)
 		}),
 		hedge.WithLeaderHandler(
 			nil, // since this is nil, 'data' should be 'op'

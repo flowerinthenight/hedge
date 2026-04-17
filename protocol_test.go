@@ -5,13 +5,12 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
-	"github.com/flowerinthenight/spindle/v3"
 )
 
 func TestProtocol_DoHeartbeat(t *testing.T) {
 	op := New(nil, "localhost:12345", "lock", "name", "log")
 	conn := &mockConn{}
-	
+
 	msg := CmdPing + " test-node"
 	doHeartbeat(context.Background(), op, conn, msg)
 
@@ -38,7 +37,7 @@ func TestProtocol_DoMembers(t *testing.T) {
 	// Encoded `{"node-a":{}, "node-b":{}}`
 	encoded := base64.StdEncoding.EncodeToString([]byte(`{"node-a":{}, "node-b":{}}`))
 	msg := CmdMembers + " " + encoded
-	
+
 	doMembers(context.Background(), op, conn, msg)
 
 	members := op.getMembers()
@@ -59,7 +58,7 @@ func TestProtocol_DoConfirmLeader(t *testing.T) {
 	conn := &mockConn{}
 
 	// Fake the leader state
-	op.currentLeaderState.Store(spindle.LeaderState{Leader: true, Token: 123})
+	op.currentLeaderState.Store(LeaderState{Leader: true, Token: 123})
 
 	doConfirmLeader(context.Background(), op, conn, CmdLeader)
 
@@ -79,13 +78,13 @@ func TestProtocol_DoSend(t *testing.T) {
 	}
 
 	op := New(nil, "localhost:12345", "lock", "name", "log", WithLeaderHandler(nil, handler))
-	op.currentLeaderState.Store(spindle.LeaderState{Leader: true, Token: 123})
-	
+	op.currentLeaderState.Store(LeaderState{Leader: true, Token: 123})
+
 	conn := &mockConn{}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte("test-payload"))
 	msg := CmdSend + " " + encoded
-	
+
 	doSend(context.Background(), op, conn, msg)
 
 	if !called {
@@ -93,7 +92,8 @@ func TestProtocol_DoSend(t *testing.T) {
 	}
 
 	reply := strings.TrimSpace(string(conn.written))
-	ss := strings.Split(reply, " "); dec, _ := base64.StdEncoding.DecodeString(ss[1])
+	ss := strings.Split(reply, " ")
+	dec, _ := base64.StdEncoding.DecodeString(ss[1])
 	if string(dec) != "reply-payload" {
 		t.Errorf("expected reply-payload, got %s", string(dec))
 	}
@@ -110,12 +110,12 @@ func TestProtocol_DoBroadcast(t *testing.T) {
 	}
 
 	op := New(nil, "localhost:12345", "lock", "name", "log", WithBroadcastHandler(nil, handler))
-	
+
 	conn := &mockConn{}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte("bc-payload"))
 	msg := CmdBroadcast + " " + encoded
-	
+
 	doBroadcast(context.Background(), op, conn, msg)
 
 	if !called {
@@ -123,7 +123,8 @@ func TestProtocol_DoBroadcast(t *testing.T) {
 	}
 
 	reply := strings.TrimSpace(string(conn.written))
-	ss := strings.Split(reply, " "); dec, _ := base64.StdEncoding.DecodeString(ss[1])
+	ss := strings.Split(reply, " ")
+	dec, _ := base64.StdEncoding.DecodeString(ss[1])
 	if string(dec) != "bc-reply" {
 		t.Errorf("expected bc-reply, got %s", string(dec))
 	}
