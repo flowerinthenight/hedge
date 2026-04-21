@@ -79,7 +79,13 @@ func main() {
 	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
 		hedge.WithGroupSyncInterval(time.Second*5),
 		hedge.WithLeaderCallback(nil, func(d any, m []byte) {
-			log.Println("callback:", string(m))
+			msg := string(m)
+			if strings.HasPrefix(msg, "1 ") {
+				log.Printf("op=leader_elected ts_ms=%d pod=%s", time.Now().UnixMilli(), strings.TrimPrefix(msg, "1 "))
+			} else if strings.HasPrefix(msg, "0 ") {
+				log.Printf("op=leader_lost ts_ms=%d pod=%s", time.Now().UnixMilli(), strings.TrimPrefix(msg, "0 "))
+			}
+			log.Println("callback:", msg)
 		}),
 		hedge.WithLeaderHandler(
 			nil, // since this is nil, 'data' should be 'op'
