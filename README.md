@@ -33,8 +33,6 @@ First, I wanted a cluster coordinator that can work within GKE or MIG as a libra
 ## What does it do?
 Leader election is handled by [spindle](https://github.com/flowerinthenight/spindle). Two APIs are provided for storage: `Put()` and `Get()`. All nodes/pods can serve the `Get()` calls, while only the leader handles the `Put()` API. If a non-leader node/pod calls `Put()`, that call is forwarded to the leader, who will do the actual write. All `Put()`'s are append-only.
 
-A `HasLock()` function is also available for distributed locking, although you can use spindle separately for that, if you prefer.
-
 A `Send()` API is also provided for members to be able to send simple request/reply-type messages to the current leader at any time. A streaming equivalent (gRPC) is also available.
 
 A `Broadcast()` API is also available for all nodes/pods. Note that due to the nature of k8s deployments or MIGs (nodes/pods come and go) and the internal heartbeat delays, some nodes/pods might not receive the broadcast message at call time, although all nodes/pods will have the complete broadcast target list eventually. Hedge uses a combination of heartbeats and broadcasts to propagate member information to all nodes/pods; non-leaders send liveness heartbeats to the leader while the leader broadcasts active members to all nodes/pods. A streaming equivalent (gRPC) is also available.
