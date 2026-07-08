@@ -174,6 +174,25 @@ func WithBroadcastHandler(d any, h FnMsgHandler) Option {
 	return withBroadcastHandler{d, h}
 }
 
+type withBroadcastPoolSize int
+
+func (w withBroadcastPoolSize) Apply(op *Op) { op.broadcastPoolSize = int(w) }
+
+// WithBroadcastPoolSize sets the per-peer connection pool size used by the unary
+// Broadcast(...) API. Connections are reused across calls instead of dialed and
+// closed each time, which removes TCP connection churn under load. Defaults to 2.
+// A value of 0 disables pooling, restoring the previous dial-per-call behavior.
+func WithBroadcastPoolSize(n int) Option { return withBroadcastPoolSize(n) }
+
+type withBroadcastTimeout time.Duration
+
+func (w withBroadcastTimeout) Apply(op *Op) { op.broadcastTimeout = time.Duration(w) }
+
+// WithBroadcastTimeout sets the default per-node round-trip timeout (dial + send +
+// recv) for the unary Broadcast(...) API. Defaults to 5s. A per-call
+// BroadcastArgs{Timeout: ...} overrides this.
+func WithBroadcastTimeout(d time.Duration) Option { return withBroadcastTimeout(d) }
+
 type withGrpcHostPort string
 
 func (w withGrpcHostPort) Apply(op *Op) { op.grpcHostPort = string(w) }
@@ -256,6 +275,10 @@ type Op struct {
 	leaderStreamOut    chan *StreamMessage
 	broadcastStreamIn  chan *StreamMessage
 	broadcastStreamOut chan *StreamMessage
+
+	broadcastPoolSize int           // per-peer conn pool size for Broadcast; 0 disables pooling
+	broadcastTimeout  time.Duration // default per-node round-trip timeout for Broadcast
+	pool              *connPool     // client-side per-peer connection pool for Broadcast
 
 	sosLock *sync.Mutex
 	soss    map[string]*SoS // distributed memory
@@ -561,6 +584,10 @@ func (op *Op) Run(ctx context.Context, done ...chan error) error {
 
 	exitedTCP.Store(1) // don't print err in tl.Accept
 	tl.Close()         // will cause tl.Accept to fail
+
+	if op.pool != nil {
+		op.pool.closeAll() // close all pooled Broadcast connections
+	}
 
 	gs.GracefulStop() // stop grpc server
 	if op.ensureOn.Load() == 1 {
@@ -916,7 +943,7 @@ type BroadcastArgs struct {
 	SkipSelf   bool // if true, skip broadcasting to self
 	Out        chan BroadcastOutput
 	OnlySendTo []string      // if set, only send to these member/s
-	Timeout    time.Duration // per-node connection timeout; defaults to 5s when not set
+	Timeout    time.Duration // per-node round-trip timeout (dial + send + recv); defaults to 5s (or WithBroadcastTimeout)
 }
 
 // Broadcast sends msg to all nodes (send to all). Any node can broadcast messages, including the
@@ -962,26 +989,19 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		outch = make(chan BroadcastOutput, len(members))
 	}
 
-	timeout := time.Second * 5
+	timeout := op.broadcastTimeout
 	if len(args) > 0 && args[0].Timeout > 0 {
 		timeout = args[0].Timeout
 	}
+
+	// The payload is identical for every member; build it once.
+	payload := fmt.Sprintf("%s %s\n", CmdBroadcast, base64.StdEncoding.EncodeToString(msg))
 
 	for k := range members {
 		w.Add(1)
 		go func(id string) {
 			defer w.Done()
-			conn, err := net.DialTimeout("tcp", id, timeout)
-			if err != nil {
-				outch <- BroadcastOutput{Id: id, Error: err}
-				return
-			}
-
-			defer conn.Close()
-			enc := base64.StdEncoding.EncodeToString(msg)
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "%s %s\n", CmdBroadcast, enc)
-			reply, err := op.send(conn, sb.String())
+			reply, err := op.broadcastTo(ctx, id, payload, timeout)
 			if err != nil {
 				outch <- BroadcastOutput{Id: id, Error: err}
 				return
@@ -1003,13 +1023,36 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		}(k)
 	}
 
-	w.Wait()
-	switch {
-	case stream:
+	// Signal when all fan-out goroutines have finished. They each carry a per-node
+	// deadline (see sendCtx), so this closes within `timeout` even if a peer stalls.
+	done := make(chan struct{})
+	go func() { w.Wait(); close(done) }()
+
+	if stream {
+		// Wait for all senders before closing the caller's channel; closing while a
+		// goroutine could still send would panic.
+		<-done
 		close(args[0].Out)
-	default:
-		for range members {
-			outs = append(outs, <-outch)
+		return outs
+	}
+
+	// Default (non-stream): collect replies as they arrive. outch is buffered to
+	// len(members), so lingering goroutines never block after we return on ctx
+	// cancellation.
+	for len(outs) < len(members) {
+		select {
+		case o := <-outch:
+			outs = append(outs, o)
+		case <-done:
+			for len(outch) > 0 {
+				outs = append(outs, <-outch)
+			}
+			return outs
+		case <-ctx.Done():
+			for len(outch) > 0 {
+				outs = append(outs, <-outch)
+			}
+			return outs
 		}
 	}
 
@@ -1150,6 +1193,63 @@ func (op *Op) Members() []string {
 	}
 
 	return members
+}
+
+// sendCtx writes msg and reads the reply on conn, bounding the whole round trip
+// (Write + ReadString) with a deadline: the sooner of timeout-from-now and the
+// caller ctx's deadline, if any. The deadline is cleared before returning so a
+// healthy conn can go back to the pool without a stale deadline.
+func (op *Op) sendCtx(ctx context.Context, conn net.Conn, msg string, timeout time.Duration) (string, error) {
+	if conn == nil {
+		return "", ErrInvalidConn
+	}
+
+	dl := time.Now().Add(timeout)
+	if cdl, ok := ctx.Deadline(); ok && cdl.Before(dl) {
+		dl = cdl
+	}
+
+	conn.SetDeadline(dl)
+	defer conn.SetDeadline(time.Time{})
+	return op.send(conn, msg)
+}
+
+// broadcastTo sends payload to member id over a pooled (or freshly dialed)
+// connection and returns the raw reply. On any write/read/deadline error the conn
+// is discarded (never returned to the pool). If the first attempt used a reused
+// pooled conn (which may have been closed by the peer while idle), a single retry
+// on a fresh connection is attempted.
+func (op *Op) broadcastTo(ctx context.Context, id, payload string, timeout time.Duration) (string, error) {
+	conn, reused, err := op.pool.get(ctx, id, timeout)
+	if err != nil {
+		return "", err
+	}
+
+	reply, err := op.sendCtx(ctx, conn, payload, timeout)
+	if err == nil {
+		op.pool.put(id, conn)
+		return reply, nil
+	}
+
+	op.pool.discard(conn)
+	if !reused {
+		return "", err // already a fresh conn; the failure is real
+	}
+
+	// Reused conn was likely stale; retry once on a fresh connection.
+	conn, _, err = op.pool.get(ctx, id, timeout)
+	if err != nil {
+		return "", err
+	}
+
+	reply, err = op.sendCtx(ctx, conn, payload, timeout)
+	if err != nil {
+		op.pool.discard(conn)
+		return "", err
+	}
+
+	op.pool.put(id, conn)
+	return reply, nil
 }
 
 func (op *Op) send(conn net.Conn, msg string) (string, error) {
@@ -1380,8 +1480,13 @@ func (op *Op) addMember(id string) {
 
 func (op *Op) delMember(id string) {
 	op.mtx.Lock()
-	defer op.mtx.Unlock()
 	delete(op.members, id)
+	op.mtx.Unlock()
+
+	// Drop any pooled connections to the departed peer (rollout/scale-down).
+	if op.pool != nil {
+		op.pool.remove(id)
+	}
 }
 
 // New creates an instance of Op. hostPort can be in "ip:port" format, or ":port" format, in which case
@@ -1402,11 +1507,16 @@ func New(client *spanner.Client, hostPort, lockTable, lockName, logTable string,
 		sosLock:       &sync.Mutex{},
 		soss:          map[string]*SoS{},
 		Lock:          &spindle.Lock{}, // init later
+
+		broadcastPoolSize: defaultBroadcastPoolSize,
+		broadcastTimeout:  defaultBroadcastTimeout,
 	}
 
 	for _, opt := range opts {
 		opt.Apply(op)
 	}
+
+	op.pool = newConnPool(op.broadcastPoolSize)
 
 	host, port, _ := net.SplitHostPort(op.hostPort)
 	switch {
