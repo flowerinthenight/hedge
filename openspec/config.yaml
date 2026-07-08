@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  Project: hedge — a Go cluster-membership library built on spindle + Cloud Spanner,
+  providing distributed primitives (Spanner-backed KV, leader election, member↔leader
+  channel, broadcast/send-to-all, distributed semaphore) to Kubernetes Deployments.
+
+  Tech stack: Go (v2 module = go 1.24, v3 module = go 1.25). Dependencies: spindle,
+  Cloud Spanner. Runs as pods in k8s Deployments where members come and go.
+
+  Repo layout / versioning:
+  - Two module majors live in the SAME repo on separate branches, not subdirectories:
+    module github.com/flowerinthenight/hedge/v2 (branch v2) and .../v3 (branch v3).
+  - A change that touches shared code almost always needs TWO parallel PRs (one per
+    branch); note both v2 and v3 line references in proposals.
+  - Downstream consumer of note: services/sapphired (leader-elected fleet).
+
+  Core internals to know:
+  - hedge.go holds the Op type and public API (Broadcast, StreamBroadcast, Send, etc.).
+  - protocol.go holds the TCP wire protocol: handleMsg is a `for {}` loop that reads a
+    line command, dispatches to a handler, and reads the next — connections are reused
+    server-side. The wire format is an UNTAGGED, `\n`-terminated line request/reply, so a
+    single connection carries exactly one in-flight request at a time.
+  - Options use the functional-options pattern: WithXxx(...) Option.
+
+  Conventions:
+  - Match surrounding code style; keep comment density and naming idiomatic to the file.
+  - Tests live in hedge_test.go.
+  - Prefer transparent, backward-compatible changes (no public signature breaks); gate new
+    behavior behind WithXxx options with safe defaults.
+
+# Per-artifact rules (optional)
+rules:
+  proposal:
+    - Note both v2 and v3 code line references under Impact when shared code changes.
+    - Call out whether downstream (sapphired) needs any change.
+  specs:
+    - Requirements must be behavioral and testable; avoid implementation detail (that
+      belongs in design.md).
+  design:
+    - Include a Migration/rollback note; prefer an option-flag rollback over a revert.

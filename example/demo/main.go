@@ -327,7 +327,7 @@ func main() {
 
 			defer writer.Close()
 			var n int
-			for i := 0; i < limit; i++ {
+			for range limit {
 				data := fmt.Sprintf("2_%v_%v", uuid.NewString(), time.Now().Format(time.RFC3339))
 				n += len([]byte(data))
 				writer.Write([]byte(data))
