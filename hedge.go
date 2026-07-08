@@ -975,7 +975,8 @@ type BroadcastOutput struct {
 type BroadcastArgs struct {
 	SkipSelf   bool // if true, skip broadcasting to self
 	Out        chan BroadcastOutput
-	OnlySendTo []string // if set, only send to these member/s
+	OnlySendTo []string      // if set, only send to these member/s
+	Timeout    time.Duration // per-node connection timeout; defaults to 5s when not set
 }
 
 // Broadcast sends msg to all nodes (send to all). Any node can broadcast messages, including the
@@ -1021,11 +1022,15 @@ func (op *Op) Broadcast(ctx context.Context, msg []byte, args ...BroadcastArgs) 
 		outch = make(chan BroadcastOutput, len(members))
 	}
 
+	timeout := time.Second * 5
+	if len(args) > 0 && args[0].Timeout > 0 {
+		timeout = args[0].Timeout
+	}
+
 	for k := range members {
 		w.Add(1)
 		go func(id string) {
 			defer w.Done()
-			timeout := time.Second * 5
 			conn, err := net.DialTimeout("tcp", id, timeout)
 			if err != nil {
 				outch <- BroadcastOutput{Id: id, Error: err}
