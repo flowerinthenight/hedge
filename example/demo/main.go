@@ -28,7 +28,7 @@ import (
 var (
 	dbstr        = flag.String("db", "", "fmt: projects/{v}/instances/{v}/databases/{v}")
 	lockName     = flag.String("lockname", "hedge-demo-group", "lock name, common to all instances")
-	spindleTable = flag.String("spindletable", "testlease", "see https://github.com/flowerinthenight/spindle for more info")
+	spindleTable = flag.String("spindletable", "testlease_v2", "see https://github.com/flowerinthenight/spindle for more info")
 	logTable     = flag.String("logtable", "", "the table for our log data (optional)")
 )
 
@@ -76,7 +76,12 @@ func main() {
 		}
 	}(context.WithValue(ctx, struct{}{}, nil))
 
-	op := hedge.New(client, ":8080", *spindleTable, *lockName, *logTable,
+	op := hedge.New(
+		client,
+		":8080",
+		*spindleTable,
+		*lockName,
+		*logTable,
 		hedge.WithGroupSyncInterval(time.Second*5),
 		hedge.WithLeaderCallback(nil, func(d any, m []byte) {
 			msg := string(m)
@@ -333,7 +338,7 @@ func main() {
 
 			defer writer.Close()
 			var n int
-			for i := 0; i < limit; i++ {
+			for range limit {
 				data := fmt.Sprintf("2_%v_%v", uuid.NewString(), time.Now().Format(time.RFC3339))
 				n += len([]byte(data))
 				writer.Write([]byte(data))

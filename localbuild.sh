@@ -1,4 +1,5 @@
 kubectl delete -f deployment.yaml
+kubectl delete -f deployment-private.yaml
 DOCKER_BUILDKIT=0 docker build --rm -t demo .
 DOCKER_BUILDKIT=0 docker tag demo asia.gcr.io/mobingi-main/hedge:$1
 DOCKER_BUILDKIT=0 docker push asia.gcr.io/mobingi-main/hedge:$1
